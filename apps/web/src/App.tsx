@@ -8,6 +8,7 @@ import MemberBar from './components/MemberBar';
 import CommandPalette from './components/CommandPalette';
 import FriendsHome from './components/FriendsHome';
 import ProfilePopout from './components/ProfilePopout';
+import ClusterSettingsModal from './components/ClusterSettingsModal';
 
 export default function App() {
   const user = useStore((s) => s.user);
@@ -15,6 +16,7 @@ export default function App() {
   const currentChannelId = useStore((s) => s.currentChannelId);
   const view = useStore((s) => s.view);
   const profileUsername = useStore((s) => s.profileUsername);
+  const settingsOpen = useStore((s) => s.settingsOpen);
 
   useEffect(() => {
     bootstrapSession();
@@ -50,6 +52,7 @@ export default function App() {
       </div>
       <CommandPalette />
       {profileUsername && <ProfilePopout />}
+      {settingsOpen && <ClusterSettingsModal />}
       <div className={`ws-pill ${wsConnected ? 'on' : ''}`}>
         {wsConnected ? '● ao vivo' : '○ desconectado'}
       </div>

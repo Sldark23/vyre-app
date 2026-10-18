@@ -3,6 +3,7 @@ import { z } from 'zod';
 import { MAX_DM_PARTICIPANTS, MAX_MESSAGE_LENGTH, MESSAGE_RATE_LIMIT } from '@vyre/shared';
 import type { DMConversation, Message } from '@vyre/shared';
 import { query } from '../db';
+import { env } from '../env';
 import { requireAuth } from './auth';
 import { toPublicUser } from '../lib/serialize';
 import { dmTopic, publishTopic, userTopic } from '../lib/events';
@@ -10,7 +11,7 @@ import { rateLimit } from '../lib/rateLimit';
 
 const DM_MESSAGE_SELECT = `
   SELECT m.id, m.conversation_id AS channel_id, m.content, m.edited_at,
-         NULL AS reply_to, m.created_at,
+         NULL AS reply_to, m.created_at, m.attachments,
          u.id AS u_id, u.username AS u_username, u.display_name AS u_display_name,
          u.avatar_url AS u_avatar_url, u.banner_color AS u_banner_color,
          u.bio AS u_bio, u.status AS u_status, u.custom_status AS u_custom_status
@@ -73,6 +74,7 @@ function mapDmMessage(row: Record<string, unknown>): Message {
     editedAt: (row.edited_at as string | null) ?? null,
     replyTo: (row.reply_to as string | null) ?? null,
     createdAt: row.created_at as string,
+    attachments: Array.isArray(row.attachments) ? (row.attachments as Message['attachments']) : [],
     author: toPublicUser({
       id: row.u_id,
       username: row.u_username,
@@ -209,7 +211,23 @@ export async function dmRoutes(app: FastifyInstance) {
     const userId = requireAuth(request);
     const { id } = request.params as { id: string };
     const parsed = z
-      .object({ content: z.string().min(1).max(MAX_MESSAGE_LENGTH) })
+      .object({
+        content: z.string().max(MAX_MESSAGE_LENGTH).optional(),
+        attachments: z
+          .array(
+            z.object({
+              url: z
+                .string()
+                .max(500)
+                .refine((u) => u.startsWith(`${env.publicUrl}/uploads/`), {
+                  message: 'URL de anexo inválida',
+                }),
+              name: z.string().min(1).max(200),
+            }),
+          )
+          .max(4)
+          .optional(),
+      })
       .safeParse(request.body);
     if (!parsed.success) return reply.code(400).send({ error: 'Mensagem inválida' });
 
@@ -218,13 +236,16 @@ export async function dmRoutes(app: FastifyInstance) {
       return reply.code(429).send({ error: 'Calma! Você está enviando mensagens rápido demais' });
     }
 
-    const content = parsed.data.content.trim();
-    if (!content) return reply.code(400).send({ error: 'Mensagem vazia' });
+    const content = (parsed.data.content ?? '').trim();
+    const attachments = parsed.data.attachments ?? [];
+    if (!content && attachments.length === 0) {
+      return reply.code(400).send({ error: 'Mensagem vazia' });
+    }
 
     const inserted = await query(
-      `INSERT INTO dm_messages (conversation_id, author_id, content) VALUES ($1, $2, $3)
-       RETURNING id`,
-      [id, userId, content],
+      `INSERT INTO dm_messages (conversation_id, author_id, content, attachments)
+       VALUES ($1, $2, $3, $4) RETURNING id`,
+      [id, userId, content, JSON.stringify(attachments)],
     );
     const full = await query(DM_MESSAGE_SELECT + ` WHERE m.id = $1`, [inserted.rows[0].id]);
     const message = mapDmMessage(full.rows[0]);

@@ -4,6 +4,8 @@ import { api, ApiError } from '../api';
 import { sendTyping } from '../ws';
 import { useStore } from '../store';
 import MessageRow, { formatDate } from './MessageRow';
+import { AttachButton, AttachmentChips, useAttachments } from './Attachments';
+import { ChatIcon, HashIcon, SearchIcon, SendIcon, XIcon } from './Icons';
 
 export default function ChatView() {
   const currentChannelId = useStore((s) => s.currentChannelId);
@@ -12,6 +14,10 @@ export default function ChatView() {
   const sendMessage = useStore((s) => s.sendMessage);
   const editMessage = useStore((s) => s.editMessage);
   const deleteMessage = useStore((s) => s.deleteMessage);
+  const myRole = useStore((s) => {
+    const cid = s.currentClusterId;
+    return cid ? s.details[cid]?.myRole ?? null : null;
+  });
   const [draft, setDraft] = useState('');
   const [reply, setReply] = useState<Message | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -20,6 +26,7 @@ export default function ChatView() {
   const [searchError, setSearchError] = useState<string | null>(null);
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef(0);
+  const att = useAttachments();
 
   const channel = useMemo(() => {
     for (const list of Object.values(channels)) {
@@ -45,20 +52,26 @@ export default function ChatView() {
     return map;
   }, [messages]);
 
+  const canAnnounce = myRole === 'owner' || myRole === 'moderator';
+  const canPost =
+    !!channel &&
+    channel.type !== 'voice' &&
+    (channel.type !== 'announcement' || canAnnounce);
+
   async function submit(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!draft.trim() || !currentChannelId) return;
+    if (!currentChannelId || !canPost) return;
     const content = draft.trim();
-    setDraft('');
+    const attachments = att.ready;
+    if (!content && attachments.length === 0) return;
     const replyTo = reply?.id;
     setReply(null);
     try {
-      await sendMessage(currentChannelId, content, replyTo);
+      await sendMessage(currentChannelId, content, replyTo, attachments);
+      setDraft('');
+      att.clear();
     } catch (err) {
-      if (err instanceof ApiError) {
-        alert(err.message);
-        setDraft(content);
-      }
+      if (err instanceof ApiError) alert(err.message);
     }
   }
 
@@ -97,7 +110,7 @@ export default function ChatView() {
         <span className="title"># {channel?.name ?? '…'}</span>
         {channel?.topic && <span className="topic">{channel.topic}</span>}
         <button className="search-btn" onClick={() => setSearchOpen((v) => !v)}>
-          🔍 Buscar <span style={{ opacity: 0.6 }}>de: fulano antes: 2026-01-01</span>
+          <SearchIcon size={14} /> Buscar <span style={{ opacity: 0.6 }}>de: fulano antes: 2026-01-01</span>
         </button>
       </div>
 
@@ -149,14 +162,18 @@ export default function ChatView() {
           <div className="message-list">
             {!channel && (
               <div className="empty-state">
-                <div className="big">💬</div>
+                <div className="big">
+                  <ChatIcon size={40} />
+                </div>
                 <h2>Bem-vindo ao Vyre</h2>
                 <p>Selecione ou crie um cluster pra começar a conversar</p>
               </div>
             )}
             {channel && (messages?.length ?? 0) === 0 && (
               <div className="empty-state">
-                <div className="big">🎉</div>
+                <div className="big">
+                  <HashIcon size={40} />
+                </div>
                 <h2>#{channel.name}</h2>
                 <p>Este é o começo do canal. Manda a primeira mensagem!</p>
               </div>
@@ -191,27 +208,47 @@ export default function ChatView() {
                 <span>
                   Respondendo <b>{reply.author.displayName}</b>
                 </span>
-                <button onClick={() => setReply(null)}>✕</button>
+                <button onClick={() => setReply(null)}>
+                  <XIcon size={13} />
+                </button>
               </div>
             )}
-            <form className={`composer ${reply ? 'with-reply' : ''}`} onSubmit={submit}>
-              <textarea
-                rows={1}
-                value={draft}
-                onChange={(e) => {
-                  setDraft(e.target.value);
-                  e.target.style.height = 'auto';
-                  e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
-                }}
-                onKeyDown={onKeyDown}
-                placeholder={channel ? `Msg em #${channel.name}` : 'Selecione um canal'}
-                disabled={!channel}
-                maxLength={4000}
-              />
-              <button className="send" type="submit" disabled={!draft.trim()}>
-                ➤
-              </button>
-            </form>
+            <AttachmentChips items={att.items} onRemove={att.remove} />
+            {canPost ? (
+              <form
+                className={`composer ${reply || att.items.length ? 'with-reply' : ''}`}
+                onSubmit={submit}
+              >
+                <AttachButton onFiles={att.addFiles} />
+                <textarea
+                  rows={1}
+                  value={draft}
+                  onChange={(e) => {
+                    setDraft(e.target.value);
+                    e.target.style.height = 'auto';
+                    e.target.style.height = `${Math.min(e.target.scrollHeight, 200)}px`;
+                  }}
+                  onKeyDown={onKeyDown}
+                  placeholder={`Msg em #${channel?.name ?? ''}`}
+                  maxLength={4000}
+                />
+                <button
+                  className="send"
+                  type="submit"
+                  disabled={att.busy || (!draft.trim() && att.ready.length === 0)}
+                >
+                  <SendIcon size={18} />
+                </button>
+              </form>
+            ) : (
+              <div className="composer-locked">
+                {!channel
+                  ? 'Selecione um canal'
+                  : channel.type === 'voice'
+                    ? 'Canais de voz não aceitam mensagens'
+                    : 'Só donos e moderadores publicam em canais de anúncios'}
+              </div>
+            )}
           </div>
         </>
       )}

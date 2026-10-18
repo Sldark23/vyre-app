@@ -144,3 +144,17 @@ CREATE TABLE IF NOT EXISTS voice_participants (
 );
 CREATE INDEX IF NOT EXISTS voice_participants_channel_idx ON voice_participants(channel_id);
 CREATE INDEX IF NOT EXISTS voice_participants_user_idx ON voice_participants(user_id);
+
+-- ============ Fase 4: gestão, moderação e mídia ============
+-- Papéis no cluster (dono original vira 'owner' via UPDATE abaixo)
+ALTER TABLE cluster_members
+  ADD COLUMN IF NOT EXISTS role text NOT NULL DEFAULT 'member'
+  CHECK (role IN ('owner','moderator','member'));
+UPDATE cluster_members m SET role = 'owner'
+  FROM clusters c WHERE c.id = m.cluster_id AND c.owner_id = m.user_id AND m.role <> 'owner';
+
+-- Anexos de imagem em mensagens (URLs geradas por /api/v1/uploads)
+ALTER TABLE messages
+  ADD COLUMN IF NOT EXISTS attachments jsonb NOT NULL DEFAULT '[]'::jsonb;
+ALTER TABLE dm_messages
+  ADD COLUMN IF NOT EXISTS attachments jsonb NOT NULL DEFAULT '[]'::jsonb;

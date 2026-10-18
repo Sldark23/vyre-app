@@ -11,6 +11,7 @@ import { channelRoutes } from './routes/channels';
 import { friendRoutes } from './routes/friends';
 import { dmRoutes } from './routes/dms';
 import { voiceRoutes } from './routes/voice';
+import { uploadRoutes } from './routes/uploads';
 import { verifyAccessToken } from './lib/auth';
 import { registerWs } from './ws';
 
@@ -76,18 +77,32 @@ export async function buildApp() {
   await app.register(friendRoutes, { prefix: '/api/v1' });
   await app.register(dmRoutes, { prefix: '/api/v1' });
   await app.register(voiceRoutes, { prefix: '/api/v1' });
+  await app.register(uploadRoutes, { prefix: '/api/v1' });
 
   registerWs(app);
+
+  // Serve uploads (imagens) — nomes aleatórios + cache imutável
+  fs.mkdirSync(env.uploadsDir, { recursive: true });
+  const { default: fastifyStatic } = await import('@fastify/static');
+  await app.register(fastifyStatic, {
+    root: env.uploadsDir,
+    prefix: '/uploads/',
+    decorateReply: false,
+    immutable: true,
+    maxAge: '365d',
+  });
 
   // Serve o build da web (SPA) se existir
   const here = path.dirname(fileURLToPath(import.meta.url));
   const webDist = path.resolve(here, '../../../apps/web/dist');
   if (env.serveWeb && fs.existsSync(path.join(webDist, 'index.html'))) {
-    const { default: fastifyStatic } = await import('@fastify/static');
     await app.register(fastifyStatic, { root: webDist, prefix: '/', wildcard: false });
     app.setNotFoundHandler((request, reply) => {
       if (request.url.startsWith('/api/') || request.url.startsWith('/ws')) {
         return reply.code(404).send({ error: 'Rota não encontrada' });
+      }
+      if (request.url.startsWith('/uploads')) {
+        return reply.code(404).send({ error: 'Arquivo não encontrado' });
       }
       if (request.method === 'GET') {
         return reply.sendFile('index.html');

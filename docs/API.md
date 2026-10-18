@@ -1,7 +1,7 @@
 # Vyre API — Referência (v1)
 
 Base (API dedicada): `https://app.vyre.zeninhost.xyz` (local: `http://127.0.0.1:3100`)
-Web app: `https://vyre.zeninhost.xyz` (mesma API, same-origin). O domínio `app.vyre` expõe **só** `/api/*` e `/ws` — pensado no app mobile.
+Web app: `https://vyre.zeninhost.xyz` (mesma API, same-origin). O domínio `app.vyre` expõe **só** `/api/*`, `/ws` e `/uploads/*` — pensado no app mobile.
 WebSocket: `wss://app.vyre.zeninhost.xyz/ws?token=<accessToken>`.
 Todas as rotas ficam em `/api/v1`. Autenticação via `Authorization: Bearer <accessToken>` (JWT, 15 min) com refresh em `/auth/refresh`.
 
@@ -122,6 +122,38 @@ Evento WS (tópico do cluster):
 ```
 
 Indicador de "falando" é calculado localmente no cliente (LiveKit `ActiveSpeakersChanged`) — não passa pelo servidor.
+
+## Fase 4: gestão, moderação e mídia
+
+**Papéis no cluster:** `owner` (dono), `moderator`, `member` (`cluster_members.role`). Dono: tudo. Mod: canais, moderação de mensagens e membros. Member: lê/escreve (dentro das regras do canal).
+
+| Método | Rota | Descrição |
+|---|---|---|
+| POST | `/uploads` | multipart `file` (PNG/JPEG/GIF/WebP, 8MB) → `{url}` (`https://vyre.zeninhost.xyz/uploads/<arq>`). Servido também em `app.vyre…/uploads/*` |
+| POST | `/clusters/:id/channels` | mod+ · `{name, type, topic?}` → cria canal (`text\|voice\|announcement\|forum`) |
+| PATCH | `/channels/:id` | mod+ · `{name?, topic?, type?, slowmodeSeconds?, locked?, move?: 'up'\|'down'}` → `{channel, channels}` |
+| DELETE | `/channels/:id` | mod+ · nunca apaga o último canal do cluster (400) |
+| PUT | `/clusters/:id/members/:userId/role` | só dono · `{role: 'moderator'\|'member'}` |
+| DELETE | `/clusters/:id/members/:userId` | kick (mod kicka `member`; dono kicka qualquer um exceto a si) |
+| DELETE | `/clusters/:id` | só dono · apaga cluster (cascade) e avisa todo mundo |
+| POST | `/clusters/:id/invite` | só dono · regenera o código |
+
+**Regras de mensagem:**
+- `type='voice'` → 403 (não aceita mensagens).
+- `type='announcement'` → só dono/mod publica (403 pros members).
+- `locked=true` → 403 pra todo mundo.
+- `attachments`: até 4 `{url, name}` — a URL **tem** que começar com `{publicUrl}/uploads/` (senão 400); `content` pode vir vazio se houver anexo.
+- Apagar mensagem: autor **ou** mod/dono do cluster.
+
+**Eventos WS novos:**
+
+```json
+{"type": "cluster:removed", "clusterId": "..."}
+```
+
+Disparado quando você é kickado ou o cluster é apagado (tópico do usuário + tópico do cluster). O cliente remove o cluster da UI e navega pra outro.
+
+**GET `/clusters/:id`** agora devolve `myRole` e `members[].role`.
 
 ## Exemplo completo (curl)
 

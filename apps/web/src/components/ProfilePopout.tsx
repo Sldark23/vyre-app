@@ -2,6 +2,7 @@ import { useEffect, useState } from 'react';
 import type { PublicProfile } from '@vyre/shared';
 import { api, ApiError } from '../api';
 import { useStore } from '../store';
+import { XIcon } from './Icons';
 
 export default function ProfilePopout() {
   const username = useStore((s) => s.profileUsername);
@@ -65,10 +66,14 @@ export default function ProfilePopout() {
       <div className="profile-card" onClick={(e) => e.stopPropagation()}>
         <div className="profile-banner" style={{ background: p?.user.bannerColor ?? 'var(--accent)' }}>
           <button className="profile-close" onClick={closeProfile}>
-            ✕
+            <XIcon size={15} />
           </button>
           <div className="profile-avatar" style={{ background: p?.user.bannerColor ?? 'var(--accent)' }}>
-            {(p?.user.displayName ?? '?').slice(0, 1).toUpperCase()}
+            {p?.user.avatarUrl ? (
+              <img src={p.user.avatarUrl} alt="" />
+            ) : (
+              (p?.user.displayName ?? '?').slice(0, 1).toUpperCase()
+            )}
           </div>
         </div>
 

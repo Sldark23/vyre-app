@@ -4,6 +4,8 @@ import { ApiError } from '../api';
 import { sendDmTyping } from '../ws';
 import { useStore } from '../store';
 import MessageRow, { formatDate } from './MessageRow';
+import { AttachButton, AttachmentChips, useAttachments } from './Attachments';
+import { ChatIcon, SendIcon, XIcon } from './Icons';
 
 function dmTitle(convId: string, meId: string | undefined): { title: string; other: PublicUser | undefined } {
   const conv = useStore.getState().dms.find((c) => c.id === convId);
@@ -26,6 +28,7 @@ export default function DMView() {
   const [draft, setDraft] = useState('');
   const bottomRef = useRef<HTMLDivElement>(null);
   const typingTimer = useRef(0);
+  const att = useAttachments();
 
   const info = useMemo(
     () => (currentDmId ? dmTitle(currentDmId, me?.id) : { title: '', other: undefined }),
@@ -38,16 +41,16 @@ export default function DMView() {
 
   async function submit(e?: React.FormEvent) {
     e?.preventDefault();
-    if (!draft.trim() || !currentDmId) return;
+    if (!currentDmId) return;
     const content = draft.trim();
-    setDraft('');
+    const attachments = att.ready;
+    if (!content && attachments.length === 0) return;
     try {
-      await sendDmMessage(currentDmId, content);
+      await sendDmMessage(currentDmId, content, attachments);
+      setDraft('');
+      att.clear();
     } catch (err) {
-      if (err instanceof ApiError) {
-        alert(err.message);
-        setDraft(content);
-      }
+      if (err instanceof ApiError) alert(err.message);
     }
   }
 
@@ -67,10 +70,14 @@ export default function DMView() {
     return (
       <main className="chat">
         <div className="chat-header">
-          <span className="title">💬 Mensagens diretas</span>
+          <span className="title">
+            <ChatIcon size={17} /> Mensagens diretas
+          </span>
         </div>
         <div className="empty-state">
-          <div className="big">💬</div>
+          <div className="big">
+            <ChatIcon size={40} />
+          </div>
           <h2>Escolha uma conversa</h2>
           <p>Selecione um amigo pra conversar ou inicie uma nova mensagem.</p>
         </div>
@@ -105,7 +112,9 @@ export default function DMView() {
       <div className="message-list">
         {(messages?.length ?? 0) === 0 && (
           <div className="empty-state">
-            <div className="big">{info.other ? info.other.displayName.slice(0, 1) : '💬'}</div>
+            <div className="big">
+              {info.other ? info.other.displayName.slice(0, 1) : <ChatIcon size={40} />}
+            </div>
             <h2>{info.other ? `@${info.other.username}` : info.title}</h2>
             <p>Este é o começo da conversa. Manda a primeira mensagem!</p>
           </div>
@@ -137,7 +146,9 @@ export default function DMView() {
             {typingNames.join(', ')} {typingNames.length > 1 ? ' estão' : ' está'} digitando…
           </div>
         )}
-        <form className="composer" onSubmit={submit}>
+        <AttachmentChips items={att.items} onRemove={att.remove} />
+        <form className={`composer ${att.items.length ? 'with-reply' : ''}`} onSubmit={submit}>
+          <AttachButton onFiles={att.addFiles} />
           <textarea
             rows={1}
             value={draft}
@@ -150,8 +161,12 @@ export default function DMView() {
             placeholder={`Mensagem para @${info.other?.username ?? info.title}`}
             maxLength={4000}
           />
-          <button className="send" type="submit" disabled={!draft.trim()}>
-            ➤
+          <button
+            className="send"
+            type="submit"
+            disabled={att.busy || (!draft.trim() && att.ready.length === 0)}
+          >
+            <SendIcon size={18} />
           </button>
         </form>
       </div>

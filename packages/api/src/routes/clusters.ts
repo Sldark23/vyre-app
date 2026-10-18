@@ -4,6 +4,7 @@ import { z } from 'zod';
 import { query, withTransaction } from '../db';
 import { requireAuth } from './auth';
 import { toChannel, toCluster, toPublicUser } from '../lib/serialize';
+import { clusterTopic, publishTopic, userTopic } from '../lib/events';
 
 function slugify(name: string): string {
   const base = name
@@ -38,6 +39,31 @@ async function assertMember(clusterId: string, userId: string): Promise<boolean>
     throw err;
   }
   return true;
+}
+
+type Role = 'owner' | 'moderator' | 'member';
+
+async function memberRole(clusterId: string, userId: string): Promise<Role | null> {
+  const r = await query(`SELECT role FROM cluster_members WHERE cluster_id = $1 AND user_id = $2`, [
+    clusterId,
+    userId,
+  ]);
+  return (r.rows[0]?.role as Role) ?? null;
+}
+
+function httpError(statusCode: number, message: string): Error & { statusCode: number } {
+  const err = new Error(message) as Error & { statusCode: number };
+  err.statusCode = statusCode;
+  return err;
+}
+
+/** Dono ou moderador — lança 403 fora. */
+async function assertMod(clusterId: string, userId: string): Promise<Role> {
+  const role = await memberRole(clusterId, userId);
+  if (role !== 'owner' && role !== 'moderator') {
+    throw httpError(403, 'Só donos e moderadores podem fazer isso');
+  }
+  return role;
 }
 
 export async function clusterRoutes(app: FastifyInstance) {
@@ -76,10 +102,10 @@ export async function clusterRoutes(app: FastifyInstance) {
         [name, slugify(name), description ?? '', userId, inviteCode()],
       );
       const created = c.rows[0];
-      await client.query(`INSERT INTO cluster_members (cluster_id, user_id) VALUES ($1, $2)`, [
-        created.id,
-        userId,
-      ]);
+      await client.query(
+        `INSERT INTO cluster_members (cluster_id, user_id, role) VALUES ($1, $2, 'owner')`,
+        [created.id, userId],
+      );
       for (const ch of DEFAULT_CHANNELS) {
         await client.query(
           `INSERT INTO channels (cluster_id, name, type, topic, position) VALUES ($1,$2,$3,$4,$5)`,
@@ -131,7 +157,7 @@ export async function clusterRoutes(app: FastifyInstance) {
       query(`SELECT * FROM clusters WHERE id = $1`, [id]),
       query(`SELECT * FROM channels WHERE cluster_id = $1 ORDER BY position`, [id]),
       query(
-        `SELECT m.nickname, m.joined_at, u.id, u.username, u.display_name, u.avatar_url,
+        `SELECT m.nickname, m.joined_at, m.role, u.id, u.username, u.display_name, u.avatar_url,
                 u.banner_color, u.bio, u.status
          FROM cluster_members m JOIN users u ON u.id = m.user_id
          WHERE m.cluster_id = $1 ORDER BY u.display_name LIMIT 200`,
@@ -147,8 +173,10 @@ export async function clusterRoutes(app: FastifyInstance) {
         user: toPublicUser(r),
         nickname: r.nickname,
         joinedAt: r.joined_at,
+        role: r.role,
       })),
       isOwner: cluster.rows[0].owner_id === userId,
+      myRole: await memberRole(id, userId),
     });
   });
 
@@ -196,5 +224,70 @@ export async function clusterRoutes(app: FastifyInstance) {
       id,
     ]);
     return reply.send({ inviteCode: updated.rows[0].invite_code });
+  });
+
+  // Kick (mod+): dono kicka qualquer um; mod kicka só members
+  app.delete('/clusters/:id/members/:userId', async (request, reply) => {
+    const userId = requireAuth(request);
+    const { id, userId: targetId } = request.params as { id: string; userId: string };
+    const myRole = await assertMod(id, userId);
+    const targetRole = await memberRole(id, targetId);
+    if (!targetRole) return reply.code(404).send({ error: 'Membro não encontrado' });
+    if (targetRole === 'owner') return reply.code(403).send({ error: 'Não dá pra kickar o dono' });
+    if (myRole === 'moderator' && targetRole === 'moderator') {
+      return reply.code(403).send({ error: 'Moderadores não podem kickar outros moderadores' });
+    }
+    await query(`DELETE FROM cluster_members WHERE cluster_id = $1 AND user_id = $2`, [
+      id,
+      targetId,
+    ]);
+    await query(
+      `UPDATE clusters SET member_count = (SELECT count(*) FROM cluster_members WHERE cluster_id = $1) WHERE id = $1`,
+      [id],
+    );
+    await publishTopic(userTopic(targetId), { type: 'cluster:removed', clusterId: id });
+    return reply.send({ ok: true });
+  });
+
+  // Papel do membro (só dono): promover/rebaixar moderator/member
+  app.put('/clusters/:id/members/:userId/role', async (request, reply) => {
+    const userId = requireAuth(request);
+    const { id, userId: targetId } = request.params as { id: string; userId: string };
+    const parsed = z.object({ role: z.enum(['moderator', 'member']) }).safeParse(request.body);
+    if (!parsed.success) return reply.code(400).send({ error: 'Papel inválido' });
+
+    const owner = await query(`SELECT owner_id FROM clusters WHERE id = $1`, [id]);
+    if (!owner.rows[0]) return reply.code(404).send({ error: 'Cluster não encontrado' });
+    if (owner.rows[0].owner_id !== userId) {
+      return reply.code(403).send({ error: 'Só o dono pode alterar papéis' });
+    }
+    const targetRole = await memberRole(id, targetId);
+    if (!targetRole) return reply.code(404).send({ error: 'Membro não encontrado' });
+    if (targetRole === 'owner') return reply.code(403).send({ error: 'O papel do dono não muda' });
+
+    await query(`UPDATE cluster_members SET role = $3 WHERE cluster_id = $1 AND user_id = $2`, [
+      id,
+      targetId,
+      parsed.data.role,
+    ]);
+    return reply.send({ ok: true, role: parsed.data.role });
+  });
+
+  // Apagar cluster (dono) — todo mundo recebe cluster:removed
+  app.delete('/clusters/:id', async (request, reply) => {
+    const userId = requireAuth(request);
+    const { id } = request.params as { id: string };
+    const owner = await query(`SELECT owner_id FROM clusters WHERE id = $1`, [id]);
+    if (!owner.rows[0]) return reply.code(404).send({ error: 'Cluster não encontrado' });
+    if (owner.rows[0].owner_id !== userId) {
+      return reply.code(403).send({ error: 'Só o dono pode apagar o cluster' });
+    }
+    const members = await query(`SELECT user_id FROM cluster_members WHERE cluster_id = $1`, [id]);
+    await query(`DELETE FROM clusters WHERE id = $1`, [id]);
+    await publishTopic(clusterTopic(id), { type: 'cluster:removed', clusterId: id });
+    for (const m of members.rows) {
+      await publishTopic(userTopic(m.user_id), { type: 'cluster:removed', clusterId: id });
+    }
+    return reply.send({ ok: true });
   });
 }

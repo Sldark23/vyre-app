@@ -1,6 +1,14 @@
 import { useState } from 'react';
 import { useStore } from '../store';
 import { leaveVoice, toggleDeafen, toggleMic } from '../voice';
+import {
+  HeadphonesIcon,
+  HeadphonesOffIcon,
+  MicIcon,
+  MicOffIcon,
+  PhoneHangupIcon,
+  SpeakerIcon,
+} from './Icons';
 
 /* Painel fixo acima do UserPanel quando o usuário está numa sala de voz */
 export default function VoicePanel() {
@@ -29,7 +37,9 @@ export default function VoicePanel() {
     <div className="voice-panel">
       <div className="voice-panel-head">
         <span className="voice-panel-title">
-          🔊 {channel?.name ?? 'Canal de voz'}
+          <span className="vpt-row">
+            <SpeakerIcon size={15} /> {channel?.name ?? 'Canal de voz'}
+          </span>
           {cluster && <span className="voice-panel-cluster">{cluster.name}</span>}
         </span>
         <span className="voice-live">● ao vivo</span>
@@ -74,14 +84,14 @@ export default function VoicePanel() {
           onClick={() => void toggleMic()}
           title={muted ? 'Ligar microfone' : 'Desligar microfone'}
         >
-          {muted ? '🔇' : '🎤'}
+          {muted ? <MicOffIcon size={18} /> : <MicIcon size={18} />}
         </button>
         <button
           className={`voice-btn ${deafened ? 'off' : ''}`}
           onClick={toggleDeafen}
           title={deafened ? 'Reativar som' : 'Abafar som'}
         >
-          {deafened ? '🔕' : '🔊'}
+          {deafened ? <HeadphonesOffIcon size={18} /> : <HeadphonesIcon size={18} />}
         </button>
         <button
           className="voice-btn disconnect"
@@ -93,7 +103,7 @@ export default function VoicePanel() {
           }}
           title="Desconectar"
         >
-          📞
+          <PhoneHangupIcon size={18} />
         </button>
       </div>
     </div>

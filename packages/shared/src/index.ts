@@ -33,13 +33,21 @@ export interface Cluster {
   createdAt: string;
 }
 
+export type ClusterRole = 'owner' | 'moderator' | 'member';
+
 export interface ClusterMember {
   user: PublicUser;
   nickname: string | null;
   joinedAt: string;
+  role: ClusterRole;
 }
 
 export type ChannelType = 'text' | 'voice' | 'announcement' | 'forum';
+
+export interface Attachment {
+  url: string;
+  name: string;
+}
 
 export interface Channel {
   id: string;
@@ -61,6 +69,7 @@ export interface Message {
   editedAt: string | null;
   replyTo: string | null;
   createdAt: string;
+  attachments: Attachment[];
 }
 
 // ============ Fase 2: amizades, DMs e presença ============
@@ -133,6 +142,7 @@ export type ServerEvent =
   | { type: 'dm:message:deleted'; conversationId: string; id: string }
   | { type: 'presence:update'; userId: string; status: UserStatus | 'offline' }
   | { type: 'voice:update'; channelId: string; participants: VoiceParticipant[] }
+  | { type: 'cluster:removed'; clusterId: string }
   | { type: 'error'; message: string };
 
 export const MAX_MESSAGE_LENGTH = 4000;

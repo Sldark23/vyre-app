@@ -2,6 +2,7 @@ import { useState } from 'react';
 import { useStore } from '../store';
 import { ApiError } from '../api';
 import type { FriendsTab } from '../store';
+import { UsersIcon } from './Icons';
 
 function FriendRow({
   name,
@@ -81,7 +82,9 @@ export default function FriendsPanel() {
   return (
     <main className="chat">
       <div className="chat-header">
-        <span className="title">👥 Amigos</span>
+        <span className="title">
+          <UsersIcon size={17} /> Amigos
+        </span>
         <div className="tabs">
           {(
             [

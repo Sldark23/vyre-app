@@ -12,10 +12,18 @@ export function formatDate(iso: string) {
   return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
 }
 
-export function Avatar({ name, color }: { name: string; color: string }) {
+export function Avatar({
+  name,
+  color,
+  url,
+}: {
+  name: string;
+  color: string;
+  url?: string | null;
+}) {
   return (
     <div className="avatar" style={{ background: color }}>
-      {name.slice(0, 1).toUpperCase()}
+      {url ? <img src={url} alt="" /> : name.slice(0, 1).toUpperCase()}
     </div>
   );
 }
@@ -37,9 +45,14 @@ export default function MessageRow({
 }) {
   const user = useStore((s) => s.user);
   const openProfile = useStore((s) => s.openProfile);
+  const myRole = useStore((s) => {
+    const cid = s.currentClusterId;
+    return cid && s.view === 'cluster' ? s.details[cid]?.myRole ?? null : null;
+  });
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(message.content);
   const isAuthor = user?.id === message.author.id;
+  const canModDelete = myRole === 'owner' || myRole === 'moderator';
 
   async function saveEdit() {
     setEditing(false);
@@ -61,7 +74,11 @@ export default function MessageRow({
             title={`Ver perfil de ${message.author.displayName}`}
             onClick={() => openProfile(message.author.username)}
           >
-            <Avatar name={message.author.displayName} color={message.author.bannerColor} />
+            <Avatar
+              name={message.author.displayName}
+              color={message.author.bannerColor}
+              url={message.author.avatarUrl}
+            />
           </button>
         )}
       </div>
@@ -109,22 +126,44 @@ export default function MessageRow({
             autoFocus
           />
         ) : (
-          <div className="content">
-            {message.content}
-            {message.editedAt && <span className="edited">(editado)</span>}
-          </div>
+          <>
+            {(message.content || message.attachments.length === 0) && (
+              <div className="content">
+                {message.content}
+                {message.editedAt && <span className="edited">(editado)</span>}
+              </div>
+            )}
+            {message.attachments.length > 0 && (
+              <div className="attachments">
+                {message.attachments.map((a) => (
+                  <a
+                    key={a.url}
+                    className="attachment"
+                    href={a.url}
+                    target="_blank"
+                    rel="noreferrer"
+                    title={a.name}
+                  >
+                    <img src={a.url} alt={a.name} loading="lazy" />
+                  </a>
+                ))}
+              </div>
+            )}
+          </>
         )}
       </div>
-      {isAuthor && !editing && (
+      {(isAuthor || canModDelete) && !editing && (
         <div className="actions">
-          <button
-            onClick={() => {
-              setDraft(message.content);
-              setEditing(true);
-            }}
-          >
-            Editar
-          </button>
+          {isAuthor && (
+            <button
+              onClick={() => {
+                setDraft(message.content);
+                setEditing(true);
+              }}
+            >
+              Editar
+            </button>
+          )}
           <button className="danger" onClick={() => onDelete(message.id).catch(() => {})}>
             Apagar
           </button>

@@ -1,13 +1,14 @@
 import { useEffect, useRef, useState } from 'react';
 import type { UserStatus } from '@vyre/shared';
 import { useStore } from '../store';
-import { ApiError } from '../api';
+import { ApiError, uploadFile } from '../api';
+import { ImageIcon, LogoutIcon, UserIcon } from './Icons';
 
-const STATUS_OPTIONS: { value: UserStatus; label: string; emoji: string }[] = [
-  { value: 'online', label: 'Online', emoji: '🟢' },
-  { value: 'idle', label: 'Ausente', emoji: '🌙' },
-  { value: 'dnd', label: 'Ocupado', emoji: '⛔' },
-  { value: 'invisible', label: 'Invisível', emoji: '👻' },
+const STATUS_OPTIONS: { value: UserStatus; label: string }[] = [
+  { value: 'online', label: 'Online' },
+  { value: 'idle', label: 'Ausente' },
+  { value: 'dnd', label: 'Ocupado' },
+  { value: 'invisible', label: 'Invisível' },
 ];
 
 export default function UserPanel() {
@@ -20,6 +21,7 @@ export default function UserPanel() {
   const [custom, setCustom] = useState('');
   const [saving, setSaving] = useState(false);
   const ref = useRef<HTMLDivElement>(null);
+  const fileRef = useRef<HTMLInputElement>(null);
 
   useEffect(() => {
     if (!open) return;
@@ -49,7 +51,11 @@ export default function UserPanel() {
     <div className="user-panel" ref={ref}>
       <button className="user-panel-btn" onClick={() => setOpen((v) => !v)}>
         <div className="avatar sm" style={{ background: user.bannerColor }}>
-          {user.displayName.slice(0, 1).toUpperCase()}
+          {user.avatarUrl ? (
+            <img src={user.avatarUrl} alt="" />
+          ) : (
+            user.displayName.slice(0, 1).toUpperCase()
+          )}
           <div className={`dot ${status} in-avatar`} />
         </div>
         <div className="info">
@@ -72,7 +78,7 @@ export default function UserPanel() {
                 setStatus(opt.value);
               }}
             >
-              <span>{opt.emoji}</span> {opt.label}
+              <span className={`dot inline ${opt.value}`} /> {opt.label}
               {status === opt.value && <span className="check">✓</span>}
             </button>
           ))}
@@ -91,6 +97,29 @@ export default function UserPanel() {
             </button>
           </div>
           <div className="status-sep" />
+          <button className="status-opt" onClick={() => fileRef.current?.click()}>
+            <ImageIcon size={15} /> Trocar avatar
+          </button>
+          <input
+            ref={fileRef}
+            type="file"
+            accept="image/png,image/jpeg,image/gif,image/webp"
+            hidden
+            onChange={async (e) => {
+              const f = e.target.files?.[0];
+              e.target.value = '';
+              if (!f) return;
+              setSaving(true);
+              try {
+                const { url } = await uploadFile(f);
+                await updateProfile({ avatarUrl: url });
+              } catch (err) {
+                if (err instanceof ApiError) alert(err.message);
+              } finally {
+                setSaving(false);
+              }
+            }}
+          />
           <button
             className="status-opt"
             onClick={() => {
@@ -98,7 +127,7 @@ export default function UserPanel() {
               openProfile(user.username);
             }}
           >
-            <span>👤</span> Ver meu perfil
+            <UserIcon size={15} /> Ver meu perfil
           </button>
           <button
             className="status-opt danger"
@@ -107,7 +136,7 @@ export default function UserPanel() {
               logout();
             }}
           >
-            <span>🚪</span> Sair
+            <LogoutIcon size={15} /> Sair
           </button>
         </div>
       )}

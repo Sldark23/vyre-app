@@ -24,6 +24,7 @@ export function rowToMessage(row: any): Message {
     editedAt: row.edited_at,
     replyTo: row.reply_to,
     createdAt: row.created_at,
+    attachments: Array.isArray(row.attachments) ? row.attachments : [],
     author: {
       id: row.u_id,
       username: row.u_username,
@@ -67,7 +68,7 @@ export function toChannel(row: any): Channel {
 }
 
 export const MESSAGE_SELECT = `
-  SELECT m.id, m.channel_id, m.content, m.edited_at, m.reply_to, m.created_at,
+  SELECT m.id, m.channel_id, m.content, m.edited_at, m.reply_to, m.created_at, m.attachments,
          u.id AS u_id, u.username AS u_username, u.display_name AS u_display_name,
          u.avatar_url AS u_avatar_url, u.banner_color AS u_banner_color,
          u.bio AS u_bio, u.status AS u_status, u.custom_status AS u_custom_status

@@ -1,9 +1,11 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
 import type {
+  Attachment,
   Channel,
   Cluster,
   ClusterMember,
+  ClusterRole,
   CurrentUser,
   DMConversation,
   DisplayStatus,
@@ -59,7 +61,10 @@ interface AppState {
   currentClusterId: string | null;
   currentChannelId: string | null;
   channels: Record<string, Channel[]>;
-  details: Record<string, { members: ClusterMember[]; isOwner: boolean }>;
+  details: Record<
+    string,
+    { members: ClusterMember[]; isOwner: boolean; myRole: ClusterRole | null }
+  >;
   messages: Record<string, Message[]>;
   unread: Record<string, number>;
   wsConnected: boolean;
@@ -74,6 +79,7 @@ interface AppState {
   dmUnread: Record<string, number>;
   dmTyping: Record<string, string[]>;
   profileUsername: string | null;
+  settingsOpen: boolean;
 
   // Fase 3: voz (LiveKit)
   voiceParticipants: Record<string, VoiceParticipant[]>; // por channelId
@@ -95,7 +101,12 @@ interface AppState {
   selectCluster: (clusterId: string) => Promise<void>;
   selectChannel: (channelId: string) => Promise<void>;
   loadMessages: (channelId: string) => Promise<void>;
-  sendMessage: (channelId: string, content: string, replyTo?: string) => Promise<void>;
+  sendMessage: (
+    channelId: string,
+    content: string,
+    replyTo?: string,
+    attachments?: Attachment[],
+  ) => Promise<void>;
   editMessage: (messageId: string, content: string) => Promise<void>;
   deleteMessage: (messageId: string) => Promise<void>;
   setWsConnected: (connected: boolean) => void;
@@ -113,7 +124,16 @@ interface AppState {
   openDm: (userIds: string[], name?: string) => Promise<void>;
   selectDm: (conversationId: string) => Promise<void>;
   loadDmMessages: (conversationId: string) => Promise<void>;
-  sendDmMessage: (conversationId: string, content: string) => Promise<void>;
+  sendDmMessage: (conversationId: string, content: string, attachments?: Attachment[]) => Promise<void>;
+
+  // gestão de cluster (Fase 4)
+  createChannel: (clusterId: string, name: string, type: string, topic?: string) => Promise<void>;
+  updateChannel: (clusterId: string, channelId: string, patch: Record<string, unknown>) => Promise<void>;
+  deleteChannel: (clusterId: string, channelId: string) => Promise<void>;
+  updateCluster: (clusterId: string, patch: Record<string, unknown>) => Promise<void>;
+  deleteCluster: (clusterId: string) => Promise<void>;
+  kickMember: (clusterId: string, userId: string) => Promise<void>;
+  setMemberRole: (clusterId: string, userId: string, role: 'moderator' | 'member') => Promise<void>;
   editDmMessage: (messageId: string, content: string) => Promise<void>;
   deleteDmMessage: (messageId: string) => Promise<void>;
 
@@ -122,6 +142,8 @@ interface AppState {
   setStatus: (status: UserStatus) => void;
   openProfile: (username: string) => void;
   closeProfile: () => void;
+  openSettings: () => void;
+  closeSettings: () => void;
 
   // voz
   setVoiceParticipants: (channelId: string, participants: VoiceParticipant[]) => void;
@@ -188,6 +210,29 @@ function presenceInState(
   };
 }
 
+type SetState = (
+  partial: Partial<AppState> | ((state: AppState) => Partial<AppState>),
+) => void;
+type GetState = () => AppState;
+
+/** Remove um cluster da UI (kick meu ou apagado pelo dono) e navega pra outro */
+function applyRemovedCluster(get: GetState, set: SetState, clusterId: string) {
+  const s = get();
+  const wasCurrent = s.currentClusterId === clusterId;
+  const rest = s.clusters.filter((c) => c.id !== clusterId);
+  const strip = <T,>(rec: Record<string, T>) =>
+    Object.fromEntries(Object.entries(rec).filter(([k]) => k !== clusterId));
+  set({
+    clusters: rest,
+    channels: strip(s.channels),
+    details: strip(s.details),
+    ...(wasCurrent
+      ? { currentClusterId: null, currentChannelId: null, view: 'home' as View, settingsOpen: false }
+      : {}),
+  });
+  if (wasCurrent && rest.length > 0) void get().selectCluster(rest[0].id);
+}
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
@@ -212,6 +257,7 @@ export const useStore = create<AppState>()(
       dmUnread: {},
       dmTyping: {},
       profileUsername: null,
+      settingsOpen: false,
       voiceParticipants: {},
       activeVoice: null,
       speakingIds: [],
@@ -266,6 +312,7 @@ export const useStore = create<AppState>()(
           dmUnread: {},
           dmTyping: {},
           profileUsername: null,
+          settingsOpen: false,
           voiceParticipants: {},
           activeVoice: null,
           speakingIds: [],
@@ -315,12 +362,17 @@ export const useStore = create<AppState>()(
           channels: Channel[];
           members: ClusterMember[];
           isOwner: boolean;
+          myRole: ClusterRole | null;
         }>(`/api/v1/clusters/${clusterId}`);
         set((s) => ({
           channels: { ...s.channels, [clusterId]: detail.channels },
           details: {
             ...s.details,
-            [clusterId]: { members: detail.members, isOwner: detail.isOwner },
+            [clusterId]: {
+              members: detail.members,
+              isOwner: detail.isOwner,
+              myRole: detail.myRole,
+            },
           },
           currentChannelId: detail.channels.find((c) => c.type === 'text')?.id ?? detail.channels[0]?.id ?? null,
         }));
@@ -349,10 +401,11 @@ export const useStore = create<AppState>()(
         subscribeChannel(channelId);
       },
 
-      async sendMessage(channelId, content, replyTo) {
+      async sendMessage(channelId, content, replyTo, attachments) {
         const data = await api.post<{ message: Message }>(`/api/v1/channels/${channelId}/messages`, {
           content,
           replyTo,
+          attachments,
         });
         // o evento WS também chega, então só adiciona se ainda não existir
         set((s) => {
@@ -368,6 +421,93 @@ export const useStore = create<AppState>()(
 
       async deleteMessage(messageId) {
         await api.del(`/api/v1/messages/${messageId}`);
+      },
+
+      // ---------- Gestão de cluster (Fase 4) ----------
+
+      async createChannel(clusterId, name, type, topic) {
+        const data = await api.post<{ channel: Channel }>(`/api/v1/clusters/${clusterId}/channels`, {
+          name,
+          type,
+          topic,
+        });
+        set((s) => ({
+          channels: { ...s.channels, [clusterId]: [...(s.channels[clusterId] ?? []), data.channel] },
+        }));
+      },
+
+      async updateChannel(clusterId, channelId, patch) {
+        const data = await api.patch<{ channel?: Channel; channels?: Channel[] }>(
+          `/api/v1/channels/${channelId}`,
+          patch,
+        );
+        set((s) => {
+          const current = s.channels[clusterId] ?? [];
+          const channels = data.channels
+            ? data.channels
+            : current.map((c) => (c.id === channelId ? { ...c, ...data.channel } : c));
+          return { channels: { ...s.channels, [clusterId]: channels } };
+        });
+      },
+
+      async deleteChannel(clusterId, channelId) {
+        await api.del(`/api/v1/channels/${channelId}`);
+        set((s) => {
+          const channels = (s.channels[clusterId] ?? []).filter((c) => c.id !== channelId);
+          const wasActive = s.currentChannelId === channelId;
+          return {
+            channels: { ...s.channels, [clusterId]: channels },
+            messages: Object.fromEntries(Object.entries(s.messages).filter(([k]) => k !== channelId)),
+            ...(wasActive
+              ? { currentChannelId: channels.find((c) => c.type !== 'voice')?.id ?? channels[0]?.id ?? null }
+              : {}),
+          };
+        });
+        const next = get().currentChannelId;
+        if (next && !get().messages[next]) void get().loadMessages(next).catch(() => {});
+      },
+
+      async updateCluster(clusterId, patch) {
+        const data = await api.patch<{ cluster: Cluster }>(`/api/v1/clusters/${clusterId}`, patch);
+        set((s) => ({
+          clusters: s.clusters.map((c) => (c.id === clusterId ? { ...c, ...data.cluster } : c)),
+        }));
+      },
+
+      async deleteCluster(clusterId) {
+        await api.del(`/api/v1/clusters/${clusterId}`);
+        applyRemovedCluster(get, set, clusterId);
+      },
+
+      async kickMember(clusterId, userId) {
+        await api.del(`/api/v1/clusters/${clusterId}/members/${userId}`);
+        set((s) => {
+          const d = s.details[clusterId];
+          if (!d) return s;
+          return {
+            details: {
+              ...s.details,
+              [clusterId]: { ...d, members: d.members.filter((m) => m.user.id !== userId) },
+            },
+          };
+        });
+      },
+
+      async setMemberRole(clusterId, userId, role) {
+        await api.put(`/api/v1/clusters/${clusterId}/members/${userId}/role`, { role });
+        set((s) => {
+          const d = s.details[clusterId];
+          if (!d) return s;
+          return {
+            details: {
+              ...s.details,
+              [clusterId]: {
+                ...d,
+                members: d.members.map((m) => (m.user.id === userId ? { ...m, role } : m)),
+              },
+            },
+          };
+        });
       },
 
       setWsConnected(connected) {
@@ -454,10 +594,10 @@ export const useStore = create<AppState>()(
         subscribeDm(conversationId);
       },
 
-      async sendDmMessage(conversationId, content) {
+      async sendDmMessage(conversationId, content, attachments) {
         const data = await api.post<{ message: Message }>(
           `/api/v1/dms/${conversationId}/messages`,
-          { content },
+          { content, attachments },
         );
         set((s) => {
           const list = s.dmMessages[conversationId] ?? [];
@@ -498,6 +638,14 @@ export const useStore = create<AppState>()(
 
       closeProfile() {
         set({ profileUsername: null });
+      },
+
+      openSettings() {
+        set({ settingsOpen: true });
+      },
+
+      closeSettings() {
+        set({ settingsOpen: false });
       },
 
       // ---------- Voz ----------
@@ -592,6 +740,8 @@ export const useStore = create<AppState>()(
           if (state.activeVoice?.channelId === event.channelId && !stillThere) {
             set({ activeVoice: null, speakingIds: [] });
           }
+        } else if (event.type === 'cluster:removed') {
+          applyRemovedCluster(get, set, event.clusterId);
         } else if (event.type === 'friend:request') {
           void get().loadFriends();
         } else if (event.type === 'friend:accepted') {

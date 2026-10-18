@@ -124,5 +124,28 @@ export const api = {
   get: <T,>(path: string) => request<T>(path),
   post: <T,>(path: string, body?: unknown) => request<T>(path, { method: 'POST', body }),
   patch: <T,>(path: string, body?: unknown) => request<T>(path, { method: 'PATCH', body }),
+  put: <T,>(path: string, body?: unknown) => request<T>(path, { method: 'PUT', body }),
   del: <T,>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
+
+/** Upload de imagem (PNG/JPEG/GIF/WebP, 8MB) → { url } pública */
+export async function uploadFile(file: File): Promise<{ url: string }> {
+  const auth = getAuth();
+  const form = new FormData();
+  form.append('file', file);
+  const doUpload = () =>
+    fetch('/api/v1/uploads', {
+      method: 'POST',
+      headers: auth?.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {},
+      body: form,
+    });
+  let res = await doUpload();
+  if (res.status === 401 && auth?.refreshToken && (await refresh())) {
+    res = await doUpload();
+  }
+  const data = await res.json().catch(() => ({}));
+  if (!res.ok) {
+    throw new ApiError(res.status, (data as { error?: string }).error ?? 'Falha no upload');
+  }
+  return data as { url: string };
+}

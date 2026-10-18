@@ -2,6 +2,7 @@ import { useStore } from '../store';
 import FriendsPanel from './FriendsPanel';
 import DMView from './DMView';
 import UserPanel from './UserPanel';
+import { UsersIcon } from './Icons';
 
 function dmLabel(convId: string): string {
   const state = useStore.getState();
@@ -28,7 +29,9 @@ export default function FriendsHome() {
             className={`channel-item dm-nav ${!currentDmId ? 'active' : ''}`}
             onClick={() => useStore.setState({ currentDmId: null, view: 'home' })}
           >
-            <span className="hash">👥</span>
+            <span className="hash">
+              <UsersIcon size={16} />
+            </span>
             <span>Amigos</span>
             {incoming.length > 0 && <span className="badge">{incoming.length}</span>}
           </button>

@@ -1,6 +1,7 @@
 import { useState } from 'react';
 import { useStore } from '../store';
 import Modals from './Modals';
+import { HomeIcon } from './Icons';
 
 export default function ClusterRail() {
   const clusters = useStore((s) => s.clusters);
@@ -18,7 +19,7 @@ export default function ClusterRail() {
         className={`rail-item home ${view === 'home' ? 'active' : ''}`}
         onClick={() => setView('home')}
       >
-        🏠
+        <HomeIcon size={20} />
         {incoming.length > 0 && <span className="rail-badge">{incoming.length}</span>}
       </button>
       <div className="rail-divider" />
