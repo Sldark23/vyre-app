@@ -87,6 +87,15 @@ export interface DMConversation {
 
 export type RelationshipState = 'none' | 'pending_out' | 'pending_in' | 'friends';
 
+// ============ Fase 3: voz (LiveKit) ============
+
+export interface VoiceParticipant {
+  userId: string;
+  username: string;
+  displayName: string;
+  avatarUrl: string | null;
+}
+
 export interface PublicProfile {
   user: PublicUser;
   bio: string;
@@ -123,6 +132,7 @@ export type ServerEvent =
   | { type: 'dm:message:edited'; conversationId: string; message: Message }
   | { type: 'dm:message:deleted'; conversationId: string; id: string }
   | { type: 'presence:update'; userId: string; status: UserStatus | 'offline' }
+  | { type: 'voice:update'; channelId: string; participants: VoiceParticipant[] }
   | { type: 'error'; message: string };
 
 export const MAX_MESSAGE_LENGTH = 4000;

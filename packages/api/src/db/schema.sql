@@ -133,3 +133,14 @@ CREATE TABLE IF NOT EXISTS dm_messages (
   created_at timestamptz NOT NULL DEFAULT now()
 );
 CREATE INDEX IF NOT EXISTS dm_messages_conv_idx ON dm_messages(conversation_id, created_at DESC);
+
+-- ============ Fase 3: voz (LiveKit) ============
+-- Participantes conectados em canais de voz (alimentado pelos webhooks do LiveKit)
+CREATE TABLE IF NOT EXISTS voice_participants (
+  session_id text PRIMARY KEY,
+  channel_id uuid NOT NULL REFERENCES channels(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS voice_participants_channel_idx ON voice_participants(channel_id);
+CREATE INDEX IF NOT EXISTS voice_participants_user_idx ON voice_participants(user_id);

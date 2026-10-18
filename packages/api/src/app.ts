@@ -10,6 +10,7 @@ import { clusterRoutes } from './routes/clusters';
 import { channelRoutes } from './routes/channels';
 import { friendRoutes } from './routes/friends';
 import { dmRoutes } from './routes/dms';
+import { voiceRoutes } from './routes/voice';
 import { verifyAccessToken } from './lib/auth';
 import { registerWs } from './ws';
 
@@ -19,6 +20,7 @@ const OPEN_ROUTES = [
   '/api/v1/auth/login',
   '/api/v1/auth/refresh',
   '/api/v1/auth/logout',
+  '/api/v1/voice/webhook',
 ];
 
 export async function buildApp() {
@@ -73,6 +75,7 @@ export async function buildApp() {
   await app.register(channelRoutes, { prefix: '/api/v1' });
   await app.register(friendRoutes, { prefix: '/api/v1' });
   await app.register(dmRoutes, { prefix: '/api/v1' });
+  await app.register(voiceRoutes, { prefix: '/api/v1' });
 
   registerWs(app);
 

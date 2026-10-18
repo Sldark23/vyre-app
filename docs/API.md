@@ -1,6 +1,8 @@
 # Vyre API — Referência (v1)
 
-Base: `https://app.vyre.zeninhost.xyz` (local: `http://127.0.0.1:3100`)
+Base (API dedicada): `https://app.vyre.zeninhost.xyz` (local: `http://127.0.0.1:3100`)
+Web app: `https://vyre.zeninhost.xyz` (mesma API, same-origin). O domínio `app.vyre` expõe **só** `/api/*` e `/ws` — pensado no app mobile.
+WebSocket: `wss://app.vyre.zeninhost.xyz/ws?token=<accessToken>`.
 Todas as rotas ficam em `/api/v1`. Autenticação via `Authorization: Bearer <accessToken>` (JWT, 15 min) com refresh em `/auth/refresh`.
 
 ## Autenticação
@@ -102,6 +104,24 @@ Servidor → cliente:
 {"type": "error", "message": "..."}
 ```
 Obs.: `invisible` é anunciado como `offline` para os outros (igual Discord); o próprio usuário recebe o status real.
+
+## Fase 3: voz (LiveKit)
+
+Canais de voz usam LiveKit (self-hosted neste VPS). A API só emite tokens e recebe os webhooks — a mídia (UDP 50000-60000) vai direto do navegador pro LiveKit (`voz.vyre.zeninhost.xyz`, DNS-only).
+
+| Método | Rota | Descrição |
+|---|---|---|
+| POST | `/voice/token` | `{channelId}` → `{url, token}` — JWT do LiveKit (sala = id do canal, identidade = userId, canPublish/canSubscribe). Exige membro do cluster e `type='voice'` |
+| GET | `/voice/:channelId` | Participantes atuais do canal de voz (`{participants: [{userId, username, displayName, avatarUrl}]}`) |
+| POST | `/voice/webhook` | Webhook do LiveKit (rota aberta; autenticada pelo JWT de webhook no header `Authorization`, `kid` = API key). Eventos: `participant_joined`, `participant_left`, `room_finished` |
+
+Evento WS (tópico do cluster):
+
+```json
+{"type": "voice:update", "channelId": "...", "participants": [{"userId": "...", "username": "...", "displayName": "...", "avatarUrl": null}]}
+```
+
+Indicador de "falando" é calculado localmente no cliente (LiveKit `ActiveSpeakersChanged`) — não passa pelo servidor.
 
 ## Exemplo completo (curl)
 

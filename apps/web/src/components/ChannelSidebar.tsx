@@ -1,5 +1,7 @@
 import { useStore } from '../store';
 import UserPanel from './UserPanel';
+import VoicePanel from './VoicePanel';
+import { joinVoice } from '../voice';
 
 const ICONS: Record<string, string> = {
   text: '#',
@@ -15,6 +17,9 @@ export default function ChannelSidebar() {
   const currentChannelId = useStore((s) => s.currentChannelId);
   const selectChannel = useStore((s) => s.selectChannel);
   const unread = useStore((s) => s.unread);
+  const voiceParticipants = useStore((s) => s.voiceParticipants);
+  const activeVoice = useStore((s) => s.activeVoice);
+  const voiceLoading = useStore((s) => s.voiceLoading);
 
   const cluster = clusters.find((c) => c.id === currentClusterId);
   const textChannels = (channels ?? []).filter((c) => c.type !== 'voice');
@@ -46,13 +51,45 @@ export default function ChannelSidebar() {
           </button>
         ))}
         {voiceChannels.length > 0 && <div className="channel-category">Canais de voz</div>}
-        {voiceChannels.map((ch) => (
-          <div key={ch.id} className="channel-item" style={{ opacity: 0.5, cursor: 'default' }} title="Voz entra na fase 3">
-            <span className="hash">{ICONS.voice}</span>
-            <span>{ch.name}</span>
-          </div>
-        ))}
+        {voiceChannels.map((ch) => {
+          const inThis = activeVoice?.channelId === ch.id;
+          const people = voiceParticipants[ch.id] ?? [];
+          return (
+            <div key={ch.id} className="voice-channel-block">
+              <button
+                className={`channel-item ${inThis ? 'active voice-active' : ''}`}
+                disabled={voiceLoading && !inThis}
+                onClick={() => {
+                  if (inThis) return; // já está aqui
+                  void joinVoice(ch.id, ch.clusterId).catch(() => {});
+                }}
+                title={inThis ? 'Você está conectado' : 'Entrar no canal de voz'}
+              >
+                <span className="hash">{ICONS.voice}</span>
+                <span style={{ overflow: 'hidden', textOverflow: 'ellipsis' }}>{ch.name}</span>
+                {people.length > 0 && <span className="voice-count">{people.length}</span>}
+              </button>
+              {people.length > 0 && (
+                <div className="voice-channel-people">
+                  {people.map((p) => (
+                    <div key={p.userId} className="voice-channel-person">
+                      <div className="avatar xs" style={{ background: 'var(--bg-3)' }}>
+                        {p.avatarUrl ? (
+                          <img src={p.avatarUrl} alt="" />
+                        ) : (
+                          p.displayName.slice(0, 1).toUpperCase()
+                        )}
+                      </div>
+                      <span>{p.displayName}</span>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+          );
+        })}
       </div>
+      <VoicePanel />
       <UserPanel />
     </aside>
   );

@@ -13,6 +13,7 @@ import type {
   PublicUser,
   ServerEvent,
   UserStatus,
+  VoiceParticipant,
 } from '@vyre/shared';
 import { api, clearAuth, getAuth, patchAuth, setAuth } from './api';
 import {
@@ -74,6 +75,15 @@ interface AppState {
   dmTyping: Record<string, string[]>;
   profileUsername: string | null;
 
+  // Fase 3: voz (LiveKit)
+  voiceParticipants: Record<string, VoiceParticipant[]>; // por channelId
+  activeVoice: { channelId: string; clusterId: string } | null;
+  speakingIds: string[]; // userIds falando agora (calcular localmente via LiveKit)
+  voiceMuted: boolean;
+  voiceDeafened: boolean;
+  voiceError: string | null;
+  voiceLoading: boolean;
+
   // ações
   login: (identifier: string, password: string) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
@@ -112,6 +122,16 @@ interface AppState {
   setStatus: (status: UserStatus) => void;
   openProfile: (username: string) => void;
   closeProfile: () => void;
+
+  // voz
+  setVoiceParticipants: (channelId: string, participants: VoiceParticipant[]) => void;
+  setActiveVoice: (active: { channelId: string; clusterId: string } | null) => void;
+  setSpeaking: (userIds: string[]) => void;
+  setVoiceMuted: (muted: boolean) => void;
+  setVoiceDeafened: (deafened: boolean) => void;
+  setVoiceError: (error: string | null) => void;
+  setVoiceLoading: (loading: boolean) => void;
+  loadVoiceParticipants: (channelId: string) => Promise<void>;
 }
 
 async function authPost(
@@ -192,6 +212,13 @@ export const useStore = create<AppState>()(
       dmUnread: {},
       dmTyping: {},
       profileUsername: null,
+      voiceParticipants: {},
+      activeVoice: null,
+      speakingIds: [],
+      voiceMuted: false,
+      voiceDeafened: false,
+      voiceError: null,
+      voiceLoading: false,
 
       async login(identifier, password) {
         const data = await authPost('/api/v1/auth/login', { identifier, password });
@@ -239,7 +266,16 @@ export const useStore = create<AppState>()(
           dmUnread: {},
           dmTyping: {},
           profileUsername: null,
+          voiceParticipants: {},
+          activeVoice: null,
+          speakingIds: [],
+          voiceMuted: false,
+          voiceDeafened: false,
+          voiceError: null,
+          voiceLoading: false,
         });
+        // sai da sala de voz sem import circular no topo
+        void import('./voice').then((m) => m.leaveVoice()).catch(() => {});
       },
 
       setView(view) {
@@ -290,6 +326,10 @@ export const useStore = create<AppState>()(
         }));
         const channelId = get().currentChannelId;
         if (channelId) await get().loadMessages(channelId);
+        // estado inicial da voz dos canais de voz do cluster
+        for (const ch of detail.channels) {
+          if (ch.type === 'voice') void get().loadVoiceParticipants(ch.id);
+        }
       },
 
       async selectChannel(channelId) {
@@ -460,6 +500,50 @@ export const useStore = create<AppState>()(
         set({ profileUsername: null });
       },
 
+      // ---------- Voz ----------
+
+      setVoiceParticipants(channelId, participants) {
+        set((s) => ({ voiceParticipants: { ...s.voiceParticipants, [channelId]: participants } }));
+      },
+
+      setActiveVoice(active) {
+        set({ activeVoice: active });
+        if (!active) set({ speakingIds: [], voiceMuted: false, voiceDeafened: false });
+      },
+
+      setSpeaking(userIds) {
+        set({ speakingIds: userIds });
+      },
+
+      setVoiceMuted(muted) {
+        set({ voiceMuted: muted });
+      },
+
+      setVoiceDeafened(deafened) {
+        set({ voiceDeafened: deafened });
+      },
+
+      setVoiceError(error) {
+        set({ voiceError: error });
+      },
+
+      setVoiceLoading(loading) {
+        set({ voiceLoading: loading });
+      },
+
+      async loadVoiceParticipants(channelId) {
+        try {
+          const data = await api.get<{ participants: VoiceParticipant[] }>(
+            `/api/v1/voice/${channelId}`,
+          );
+          set((s) => ({
+            voiceParticipants: { ...s.voiceParticipants, [channelId]: data.participants },
+          }));
+        } catch {
+          /* sem acesso ou canal sumiu — ignora */
+        }
+      },
+
       // ---------- Eventos WS ----------
 
       handleWsEvent(event) {
@@ -496,6 +580,18 @@ export const useStore = create<AppState>()(
           }));
         } else if (event.type === 'presence:update') {
           set((s) => presenceInState(s, event.userId, event.status));
+        } else if (event.type === 'voice:update') {
+          set((s) => ({
+            voiceParticipants: { ...s.voiceParticipants, [event.channelId]: event.participants },
+          }));
+          // se eu saí da sala (webhook me removeu), limpa o painel
+          const me = state.user?.id;
+          const stillThere =
+            me &&
+            (event.participants ?? []).some((p) => p.userId === me);
+          if (state.activeVoice?.channelId === event.channelId && !stillThere) {
+            set({ activeVoice: null, speakingIds: [] });
+          }
         } else if (event.type === 'friend:request') {
           void get().loadFriends();
         } else if (event.type === 'friend:accepted') {

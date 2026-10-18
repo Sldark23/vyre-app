@@ -33,6 +33,10 @@ export const env = {
     process.env.VYRE_DB_URL ??
     `postgres://vyre:${process.env.VYRE_DB_PASSWORD ?? ''}@127.0.0.1:5433/vyre`,
   redisUrl: process.env.VYRE_REDIS_URL ?? 'redis://127.0.0.1:6379',
+  // LiveKit (voz) — chaves espelhadas em /root/vyre-app/livekit/livekit.yaml
+  livekitUrl: process.env.VYRE_LIVEKIT_URL ?? 'wss://voz.vyre.zeninhost.xyz',
+  livekitKey: process.env.VYRE_LIVEKIT_KEY ?? '',
+  livekitSecret: process.env.VYRE_LIVEKIT_SECRET ?? '',
   jwtSecret,
   serveWeb: process.env.VYRE_SERVE_WEB !== '0',
   corsOrigins: (process.env.VYRE_CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173')
