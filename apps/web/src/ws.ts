@@ -1,8 +1,9 @@
 import type { ServerEvent, UserStatus } from '@vyre/shared';
+import { getValidToken, refreshSession } from './api';
 
 let socket: WebSocket | null = null;
 let retryDelay = 1000;
-let currentToken: string | null = null;
+let generation = 0;
 let onEventCallback: ((e: ServerEvent) => void) | null = null;
 const subscribedChannels = new Set<string>();
 const subscribedDms = new Set<string>();
@@ -22,9 +23,12 @@ function sendSubscriptions() {
   }
 }
 
-function open(token: string, onEvent: (e: ServerEvent) => void) {
-  currentToken = token;
-  onEventCallback = onEvent;
+async function open(myGen: number) {
+  const onEvent = onEventCallback;
+  if (!onEvent) return;
+  // sempre com token válido: renova sozinho perto dos 15 min
+  const token = await getValidToken();
+  if (myGen !== generation || !token) return; // outra conexão assumiu enquanto renovava
   const proto = location.protocol === 'https:' ? 'wss' : 'ws';
   const ws = new WebSocket(`${proto}://${location.host}/ws?token=${encodeURIComponent(token)}`);
   socket = ws;
@@ -37,17 +41,20 @@ function open(token: string, onEvent: (e: ServerEvent) => void) {
   ws.onmessage = (raw) => {
     try {
       const event = JSON.parse(raw.data) as ServerEvent;
-      onEventCallback?.(event);
+      onEvent(event);
     } catch {
       /* ignora */
     }
   };
-  ws.onclose = () => {
-    socket = null;
+  ws.onclose = async (e) => {
+    if (socket === ws) socket = null;
     window.dispatchEvent(new CustomEvent('vyre:ws', { detail: { connected: false } }));
+    if (myGen !== generation) return; // desconectou por substituição, não reconecta
+    // 4001 = token recusado pelo servidor → renova antes de tentar de novo
+    if (e.code === 4001) retryDelay = 1000;
     if (reconnectTimer) window.clearTimeout(reconnectTimer);
     reconnectTimer = window.setTimeout(() => {
-      if (currentToken) open(currentToken, onEventCallback!);
+      void open(myGen);
     }, retryDelay);
     retryDelay = Math.min(retryDelay * 2, 15_000);
   };
@@ -55,15 +62,22 @@ function open(token: string, onEvent: (e: ServerEvent) => void) {
 }
 
 export function connectWs(token: string, onEvent: (e: ServerEvent) => void) {
+  void token; // token vem do storage (login/sessão salva); open() valida e renova
+  generation++;
+  onEventCallback = onEvent;
   if (socket) {
+    socket.onclose = null;
+    socket.onerror = null;
+    socket.onmessage = null;
     socket.close();
     socket = null;
   }
-  open(token, onEvent);
+  if (reconnectTimer) window.clearTimeout(reconnectTimer);
+  void open(generation);
 }
 
 export function disconnectWs() {
-  currentToken = null;
+  generation++;
   onEventCallback = null;
   subscribedChannels.clear();
   subscribedDms.clear();
@@ -71,6 +85,8 @@ export function disconnectWs() {
   if (reconnectTimer) window.clearTimeout(reconnectTimer);
   if (socket) {
     socket.onclose = null;
+    socket.onerror = null;
+    socket.onmessage = null;
     socket.close();
     socket = null;
   }

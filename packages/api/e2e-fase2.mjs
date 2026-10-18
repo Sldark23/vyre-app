@@ -47,6 +47,27 @@ const dev = await login('vyre.dev');
 ok('login 2 usuários', !!ana.accessToken && !!dev.accessToken);
 
 console.log('— Reset de estado —');
+// zera a DM 1:1 entre os usuários de teste (o dm:created só dispara em criação real)
+{
+  const fs = await import('node:fs');
+  const { default: pg } = await import('pg');
+  const dbEnv = fs.readFileSync('/root/vyre-app/.env.db', 'utf8');
+  const pw = dbEnv.match(/VYRE_DB_PASSWORD=(.+)/)?.[1]?.trim() ?? '';
+  const client = new pg.Client({
+    connectionString: process.env.VYRE_DB_URL ?? `postgres://vyre:${pw}@127.0.0.1:5433/vyre`,
+  });
+  await client.connect();
+  await client.query(
+    `DELETE FROM dm_conversations WHERE is_group = false AND id IN (
+       SELECT a.conversation_id FROM dm_participants a
+       JOIN dm_participants b ON b.conversation_id = a.conversation_id AND b.user_id = $2
+       WHERE a.user_id = $1
+     )`,
+    [ana.user.id, dev.user.id],
+  );
+  await client.end();
+  console.log('   (DM antiga zerada)');
+}
 await fetch(`${API}/friends/${ana.user.id}`, { method: 'DELETE', headers: auth(dev.accessToken) });
 for (const token of [ana.accessToken, dev.accessToken]) {
   const f = await (await fetch(`${API}/friends`, { headers: auth(token) })).json();

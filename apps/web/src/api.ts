@@ -38,21 +38,58 @@ export class ApiError extends Error {
   }
 }
 
-async function refresh(): Promise<boolean> {
+let refreshing: Promise<boolean> | null = null;
+
+function refresh(): Promise<boolean> {
+  // dedupe: aba+WS podem disparar refresh ao mesmo tempo → uma chamada só
+  if (refreshing) return refreshing;
+  refreshing = (async () => {
+    const auth = getAuth();
+    if (!auth?.refreshToken) return false;
+    try {
+      const res = await fetch('/api/v1/auth/refresh', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ refreshToken: auth.refreshToken }),
+      });
+      if (!res.ok) return false;
+      const data = await res.json();
+      setAuth({ ...auth, accessToken: data.accessToken, refreshToken: data.refreshToken });
+      return true;
+    } catch {
+      return false;
+    }
+  })().finally(() => {
+    refreshing = null;
+  });
+  return refreshing;
+}
+
+/** Renova os tokens se estiverem perto de expirar e devolve um access token válido. */
+export async function getValidToken(): Promise<string | null> {
   const auth = getAuth();
-  if (!auth?.refreshToken) return false;
+  if (!auth?.accessToken) return null;
+  const exp = jwtExp(auth.accessToken);
+  // renova 60s antes do vencimento (JWT de 15 min)
+  if (exp && exp * 1000 - Date.now() < 60_000) {
+    if (await refresh()) return getAuth()?.accessToken ?? null;
+  }
+  return auth.accessToken;
+}
+
+/** Renova os tokens à força (usado quando o servidor recusa o access token). */
+export async function refreshSession(): Promise<boolean> {
+  return refresh();
+}
+
+function jwtExp(token: string): number | null {
   try {
-    const res = await fetch('/api/v1/auth/refresh', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json' },
-      body: JSON.stringify({ refreshToken: auth.refreshToken }),
-    });
-    if (!res.ok) return false;
-    const data = await res.json();
-    setAuth({ ...auth, accessToken: data.accessToken, refreshToken: data.refreshToken });
-    return true;
+    const payload = JSON.parse(
+      atob(token.split('.')[1].replace(/-/g, '+').replace(/_/g, '/')),
+    ) as { exp?: number };
+    return typeof payload.exp === 'number' ? payload.exp : null;
   } catch {
-    return false;
+    return null;
   }
 }
 

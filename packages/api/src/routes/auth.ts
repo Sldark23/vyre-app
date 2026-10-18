@@ -102,13 +102,25 @@ export async function authRoutes(app: FastifyInstance) {
     const body = z.object({ refreshToken: z.string().min(1) }).safeParse(request.body);
     if (!body.success) return reply.code(400).send({ error: 'Dados inválidos' });
     const tokenHash = hashToken(body.data.refreshToken);
-    const result = await query(
-      `SELECT * FROM refresh_tokens
-       WHERE token_hash = $1 AND revoked_at IS NULL AND expires_at > now()`,
-      [tokenHash],
-    );
+    const result = await query(`SELECT * FROM refresh_tokens WHERE token_hash = $1`, [
+      tokenHash,
+    ]);
     const row = result.rows[0];
     if (!row) return reply.code(401).send({ error: 'Refresh token inválido' });
+    if (new Date(row.expires_at).getTime() <= Date.now()) {
+      return reply.code(401).send({ error: 'Refresh token expirado' });
+    }
+    if (row.revoked_at) {
+      // janela de graça de 60s: outra aba/sessão pode ter rotacionado o mesmo
+      // token no mesmo instante (204/WS renovando em paralelo) — dentro da
+      // janela emite um par novo independente; fora dela, reuso = revogado.
+      const graceMs = 60_000;
+      if (Date.now() - new Date(row.revoked_at).getTime() > graceMs) {
+        return reply.code(401).send({ error: 'Refresh token revogado' });
+      }
+      const tokens = await issueTokens(row.user_id);
+      return reply.send(tokens);
+    }
     await query(`UPDATE refresh_tokens SET revoked_at = now() WHERE id = $1`, [row.id]);
     const tokens = await issueTokens(row.user_id);
     return reply.send(tokens);
