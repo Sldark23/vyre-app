@@ -86,3 +86,50 @@ CREATE TABLE IF NOT EXISTS messages (
 );
 CREATE INDEX IF NOT EXISTS messages_channel_created_idx ON messages(channel_id, created_at DESC);
 CREATE INDEX IF NOT EXISTS messages_search_idx ON messages USING gin (to_tsvector('portuguese', content));
+
+-- ============ Fase 2: amizades ============
+CREATE TABLE IF NOT EXISTS friend_requests (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  from_user uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  to_user uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  status text NOT NULL DEFAULT 'pending' CHECK (status IN ('pending','accepted','declined')),
+  created_at timestamptz NOT NULL DEFAULT now(),
+  UNIQUE (from_user, to_user),
+  CHECK (from_user <> to_user)
+);
+CREATE INDEX IF NOT EXISTS friend_requests_to_idx ON friend_requests(to_user, status);
+
+CREATE TABLE IF NOT EXISTS friendships (
+  user_a uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  user_b uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (user_a, user_b),
+  CHECK (user_a < user_b)
+);
+
+-- ============ Fase 2: DMs ============
+CREATE TABLE IF NOT EXISTS dm_conversations (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  is_group boolean NOT NULL DEFAULT false,
+  name text,
+  created_by uuid REFERENCES users(id),
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+
+CREATE TABLE IF NOT EXISTS dm_participants (
+  conversation_id uuid NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  joined_at timestamptz NOT NULL DEFAULT now(),
+  PRIMARY KEY (conversation_id, user_id)
+);
+CREATE INDEX IF NOT EXISTS dm_participants_user_idx ON dm_participants(user_id);
+
+CREATE TABLE IF NOT EXISTS dm_messages (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  conversation_id uuid NOT NULL REFERENCES dm_conversations(id) ON DELETE CASCADE,
+  author_id uuid NOT NULL REFERENCES users(id),
+  content text NOT NULL DEFAULT '',
+  edited_at timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS dm_messages_conv_idx ON dm_messages(conversation_id, created_at DESC);

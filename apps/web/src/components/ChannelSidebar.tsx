@@ -1,4 +1,5 @@
 import { useStore } from '../store';
+import UserPanel from './UserPanel';
 
 const ICONS: Record<string, string> = {
   text: '#',
@@ -14,7 +15,6 @@ export default function ChannelSidebar() {
   const currentChannelId = useStore((s) => s.currentChannelId);
   const selectChannel = useStore((s) => s.selectChannel);
   const unread = useStore((s) => s.unread);
-  const user = useStore((s) => s.user);
 
   const cluster = clusters.find((c) => c.id === currentClusterId);
   const textChannels = (channels ?? []).filter((c) => c.type !== 'voice');
@@ -53,15 +53,7 @@ export default function ChannelSidebar() {
           </div>
         ))}
       </div>
-      <div className="user-panel">
-        <div className="avatar sm" style={{ background: user?.bannerColor ?? 'var(--accent)' }}>
-          {user?.displayName?.slice(0, 1).toUpperCase()}
-        </div>
-        <div className="info">
-          <div className="name">{user?.displayName}</div>
-          <div className="tag">@{user?.username}</div>
-        </div>
-      </div>
+      <UserPanel />
     </aside>
   );
 }

@@ -3,136 +3,15 @@ import type { Message } from '@vyre/shared';
 import { api, ApiError } from '../api';
 import { sendTyping } from '../ws';
 import { useStore } from '../store';
-
-function formatTime(iso: string) {
-  return new Date(iso).toLocaleTimeString('pt-BR', { hour: '2-digit', minute: '2-digit' });
-}
-
-function formatDate(iso: string) {
-  const d = new Date(iso);
-  return d.toLocaleDateString('pt-BR', { day: '2-digit', month: 'long', year: 'numeric' });
-}
-
-function Avatar({ name, color }: { name: string; color: string }) {
-  return (
-    <div className="avatar" style={{ background: color }}>
-      {name.slice(0, 1).toUpperCase()}
-    </div>
-  );
-}
-
-function MessageRow({
-  message,
-  grouped,
-  replyAuthor,
-  onReply,
-}: {
-  message: Message;
-  grouped: boolean;
-  replyAuthor?: string;
-  onReply: (m: Message) => void;
-}) {
-  const user = useStore((s) => s.user);
-  const editMessage = useStore((s) => s.editMessage);
-  const deleteMessage = useStore((s) => s.deleteMessage);
-  const [editing, setEditing] = useState(false);
-  const [draft, setDraft] = useState(message.content);
-  const isAuthor = user?.id === message.author.id;
-
-  async function saveEdit() {
-    setEditing(false);
-    const content = draft.trim();
-    if (!content || content === message.content) return;
-    try {
-      await editMessage(message.id, content);
-    } catch (err) {
-      if (err instanceof ApiError) alert(err.message);
-    }
-  }
-
-  return (
-    <div className={`message ${grouped ? 'grouped' : ''}`}>
-      <div className="gutter">
-        {!grouped && <Avatar name={message.author.displayName} color={message.author.bannerColor} />}
-      </div>
-      <div className="body">
-        {message.replyTo && replyAuthor && (
-          <div className="reply-ref">↩︎ respondendo <b>{replyAuthor}</b></div>
-        )}
-        {!grouped && (
-          <div className="meta">
-            <span className="author" style={{ color: message.author.bannerColor }}>
-              {message.author.displayName}
-            </span>
-            <span className="time">{formatTime(message.createdAt)}</span>
-          </div>
-        )}
-        {editing ? (
-          <textarea
-            className="content"
-            style={{
-              width: '100%',
-              background: 'var(--bg-0)',
-              border: '1px solid var(--accent)',
-              borderRadius: 6,
-              color: 'var(--text-0)',
-              padding: 6,
-              outline: 'none',
-            }}
-            value={draft}
-            onChange={(e) => setDraft(e.target.value)}
-            onBlur={saveEdit}
-            onKeyDown={(e) => {
-              if (e.key === 'Enter' && !e.shiftKey) {
-                e.preventDefault();
-                saveEdit();
-              }
-              if (e.key === 'Escape') {
-                setDraft(message.content);
-                setEditing(false);
-              }
-            }}
-            autoFocus
-          />
-        ) : (
-          <div className="content">
-            {message.content}
-            {message.editedAt && <span className="edited">(editado)</span>}
-          </div>
-        )}
-      </div>
-      {isAuthor && !editing && (
-        <div className="actions">
-          <button
-            onClick={() => {
-              setDraft(message.content);
-              setEditing(true);
-            }}
-          >
-            Editar
-          </button>
-          <button
-            className="danger"
-            onClick={() => deleteMessage(message.id).catch(() => {})}
-          >
-            Apagar
-          </button>
-        </div>
-      )}
-      {!isAuthor && !editing && (
-        <div className="actions">
-          <button onClick={() => onReply(message)}>Responder</button>
-        </div>
-      )}
-    </div>
-  );
-}
+import MessageRow, { formatDate } from './MessageRow';
 
 export default function ChatView() {
   const currentChannelId = useStore((s) => s.currentChannelId);
   const channels = useStore((s) => s.channels);
   const messages = useStore((s) => (currentChannelId ? s.messages[currentChannelId] : undefined));
   const sendMessage = useStore((s) => s.sendMessage);
+  const editMessage = useStore((s) => s.editMessage);
+  const deleteMessage = useStore((s) => s.deleteMessage);
   const [draft, setDraft] = useState('');
   const [reply, setReply] = useState<Message | null>(null);
   const [searchOpen, setSearchOpen] = useState(false);
@@ -292,7 +171,14 @@ export default function ChatView() {
               return (
                 <div key={m.id} style={{ width: '100%' }}>
                   {showDay && <div className="day-sep">{formatDate(m.createdAt)}</div>}
-                  <MessageRow message={m} grouped={grouped} replyAuthor={replyAuthor} onReply={setReply} />
+                  <MessageRow
+                    message={m}
+                    grouped={grouped}
+                    replyAuthor={replyAuthor}
+                    onReply={setReply}
+                    onEdit={editMessage}
+                    onDelete={deleteMessage}
+                  />
                 </div>
               );
             })}

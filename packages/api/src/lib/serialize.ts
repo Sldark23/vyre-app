@@ -11,6 +11,7 @@ export function toPublicUser(row: any): PublicUser {
     bannerColor: row.banner_color,
     bio: row.bio,
     status: row.status,
+    customStatus: row.custom_status ?? null,
   };
 }
 
@@ -31,6 +32,7 @@ export function rowToMessage(row: any): Message {
       bannerColor: row.u_banner_color,
       bio: row.u_bio,
       status: row.u_status,
+      customStatus: row.u_custom_status ?? null,
     },
   };
 }
@@ -68,7 +70,7 @@ export const MESSAGE_SELECT = `
   SELECT m.id, m.channel_id, m.content, m.edited_at, m.reply_to, m.created_at,
          u.id AS u_id, u.username AS u_username, u.display_name AS u_display_name,
          u.avatar_url AS u_avatar_url, u.banner_color AS u_banner_color,
-         u.bio AS u_bio, u.status AS u_status
+         u.bio AS u_bio, u.status AS u_status, u.custom_status AS u_custom_status
   FROM messages m
   JOIN users u ON u.id = m.author_id
 `;

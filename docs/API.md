@@ -1,6 +1,6 @@
 # Vyre API — Referência (v1)
 
-Base: `https://vyre.zeninhost.xyz` (local: `http://127.0.0.1:3100`)
+Base: `https://app.vyre.zeninhost.xyz` (local: `http://127.0.0.1:3100`)
 Todas as rotas ficam em `/api/v1`. Autenticação via `Authorization: Bearer <accessToken>` (JWT, 15 min) com refresh em `/auth/refresh`.
 
 ## Autenticação
@@ -35,6 +35,38 @@ Todas as rotas ficam em `/api/v1`. Autenticação via `Authorization: Bearer <ac
 | DELETE | `/messages/:id` | apaga (autor) |
 | GET | `/channels/:id/search?q=...` | busca com filtros: `de:usuario antes:2026-01-01 depois:2025-12-31 termo livre` |
 
+## Amigos (Fase 2)
+
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/friends` | `{friends, incoming, outgoing}` — amigos e pedidos |
+| POST | `/friends/requests` | `{username}` → envia pedido (auto-aceita se já há pedido inverso) |
+| POST | `/friends/requests/:id/accept` | aceita (destinatário) |
+| POST | `/friends/requests/:id/decline` | recusa (destinatário) ou cancela (remetente) |
+| DELETE | `/friends/:userId` | desfaz a amizade |
+
+## Mensagens diretas (Fase 2)
+
+DMs exigem amizade ou cluster em comum. 1 usuário = conversa 1:1 (reusa se existir); vários = grupo de até 10.
+
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/dms` | minhas conversas (com participantes e última mensagem) |
+| POST | `/dms` | `{userIds: [uuid...], name?}` → abre/cria conversa |
+| GET | `/dms/:id/messages?before=<ISO>&limit=50` | histórico da conversa |
+| POST | `/dms/:id/messages` | `{content}` → envia (rate limit 30/min) |
+| PATCH | `/dm-messages/:id` | `{content}` → edita (autor) |
+| DELETE | `/dm-messages/:id` | apaga (autor) |
+
+## Perfil e presença (Fase 2)
+
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/users/:username` | perfil público: user, bio, relationship (`none\|pending_out\|pending_in\|friends`), sharedClusters |
+| PATCH | `/users/me` | `{displayName?, bio?, bannerColor?, avatarUrl?, customStatus?, status?}` |
+
+`status`: `online \| idle \| dnd \| invisible` (presença ao vivo também muda via WebSocket).
+
 ## WebSocket — `/ws?token=<accessToken>`
 
 Cliente → servidor:
@@ -42,7 +74,14 @@ Cliente → servidor:
 {"type": "subscribe", "channel": "<channelId>"}
 {"type": "unsubscribe", "channel": "<channelId>"}
 {"type": "typing", "channel": "<channelId>"}
+{"type": "subscribe-dm", "conversation": "<convId>"}
+{"type": "unsubscribe-dm", "conversation": "<convId>"}
+{"type": "dm-typing", "conversation": "<convId>"}
+{"type": "subscribe-cluster", "cluster": "<clusterId>"}
+{"type": "unsubscribe-cluster", "cluster": "<clusterId>"}
+{"type": "presence", "status": "online|idle|dnd|invisible"}
 ```
+O tópico pessoal (`vyre:user:<seuId>`) é assinado automaticamente na conexão — é por ele que chegam pedidos de amizade, novas DMs e presença dos amigos. Ao conectar, o servidor também anuncia seu status para os clusters e amigos; ao desconectar (última sessão, após 5s), anuncia `offline`.
 
 Servidor → cliente:
 ```json
@@ -51,13 +90,23 @@ Servidor → cliente:
 {"type": "message:edited", "message": {...}}
 {"type": "message:deleted", "id": "...", "channelId": "..."}
 {"type": "typing", "channel": "...", "userId": "..."}
+{"type": "presence:update", "userId": "...", "status": "online|idle|dnd|invisible|offline"}
+{"type": "friend:request", "from": {PublicUser}}
+{"type": "friend:accepted", "user": {PublicUser}}
+{"type": "friend:removed", "userId": "..."}
+{"type": "dm:created", "conversation": {id, participants, lastMessage, ...}}
+{"type": "dm:typing", "conversation": "...", "userId": "..."}
+{"type": "dm:message:created", "conversationId": "...", "message": {...}}
+{"type": "dm:message:edited", "conversationId": "...", "message": {...}}
+{"type": "dm:message:deleted", "conversationId": "...", "id": "..."}
 {"type": "error", "message": "..."}
 ```
+Obs.: `invisible` é anunciado como `offline` para os outros (igual Discord); o próprio usuário recebe o status real.
 
 ## Exemplo completo (curl)
 
 ```bash
-B=https://vyre.zeninhost.xyz/api/v1
+B=https://app.vyre.zeninhost.xyz/api/v1
 TOKEN=$(curl -s -X POST $B/auth/login \
   -H 'Content-Type: application/json' \
   -d '{"identifier":"voce@email.com","password":"sua_senha"}' \

@@ -1,16 +1,24 @@
-import type { ServerEvent } from '@vyre/shared';
+import type { ServerEvent, UserStatus } from '@vyre/shared';
 
 let socket: WebSocket | null = null;
 let retryDelay = 1000;
 let currentToken: string | null = null;
 let onEventCallback: ((e: ServerEvent) => void) | null = null;
 const subscribedChannels = new Set<string>();
+const subscribedDms = new Set<string>();
+const subscribedClusters = new Set<string>();
 let reconnectTimer: number | null = null;
 
 function sendSubscriptions() {
   if (!socket || socket.readyState !== WebSocket.OPEN) return;
   for (const channel of subscribedChannels) {
     socket.send(JSON.stringify({ type: 'subscribe', channel }));
+  }
+  for (const conversation of subscribedDms) {
+    socket.send(JSON.stringify({ type: 'subscribe-dm', conversation }));
+  }
+  for (const cluster of subscribedClusters) {
+    socket.send(JSON.stringify({ type: 'subscribe-cluster', cluster }));
   }
 }
 
@@ -58,6 +66,8 @@ export function disconnectWs() {
   currentToken = null;
   onEventCallback = null;
   subscribedChannels.clear();
+  subscribedDms.clear();
+  subscribedClusters.clear();
   if (reconnectTimer) window.clearTimeout(reconnectTimer);
   if (socket) {
     socket.onclose = null;
@@ -73,8 +83,34 @@ export function subscribeChannel(channelId: string) {
   }
 }
 
+export function subscribeDm(conversationId: string) {
+  subscribedDms.add(conversationId);
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'subscribe-dm', conversation: conversationId }));
+  }
+}
+
+export function subscribeCluster(clusterId: string) {
+  subscribedClusters.add(clusterId);
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'subscribe-cluster', cluster: clusterId }));
+  }
+}
+
 export function sendTyping(channelId: string) {
   if (socket?.readyState === WebSocket.OPEN) {
     socket.send(JSON.stringify({ type: 'typing', channel: channelId }));
+  }
+}
+
+export function sendDmTyping(conversationId: string) {
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'dm-typing', conversation: conversationId }));
+  }
+}
+
+export function sendPresence(status: UserStatus) {
+  if (socket?.readyState === WebSocket.OPEN) {
+    socket.send(JSON.stringify({ type: 'presence', status }));
   }
 }

@@ -5,17 +5,29 @@ import Modals from './Modals';
 export default function ClusterRail() {
   const clusters = useStore((s) => s.clusters);
   const currentClusterId = useStore((s) => s.currentClusterId);
+  const view = useStore((s) => s.view);
+  const setView = useStore((s) => s.setView);
+  const incoming = useStore((s) => s.incoming);
   const selectCluster = useStore((s) => s.selectCluster);
   const [modal, setModal] = useState<'create' | 'join' | null>(null);
 
   return (
     <nav className="rail">
+      <button
+        title="Amigos e mensagens diretas"
+        className={`rail-item home ${view === 'home' ? 'active' : ''}`}
+        onClick={() => setView('home')}
+      >
+        🏠
+        {incoming.length > 0 && <span className="rail-badge">{incoming.length}</span>}
+      </button>
+      <div className="rail-divider" />
       {clusters.map((c) => (
         <button
           key={c.id}
           title={c.name}
-          className={`rail-item ${currentClusterId === c.id ? 'active' : ''}`}
-          style={!currentClusterId || currentClusterId !== c.id ? { background: c.bannerColor } : undefined}
+          className={`rail-item ${view === 'cluster' && currentClusterId === c.id ? 'active' : ''}`}
+          style={!(view === 'cluster' && currentClusterId === c.id) ? { background: c.bannerColor } : undefined}
           onClick={() => selectCluster(c.id)}
         >
           {c.name.slice(0, 2).toUpperCase()}

@@ -1,18 +1,49 @@
 import { create } from 'zustand';
 import { persist } from 'zustand/middleware';
-import type { Channel, Cluster, ClusterMember, CurrentUser, Message, ServerEvent } from '@vyre/shared';
+import type {
+  Channel,
+  Cluster,
+  ClusterMember,
+  CurrentUser,
+  DMConversation,
+  DisplayStatus,
+  FriendEntry,
+  FriendRequestEntry,
+  Message,
+  PublicUser,
+  ServerEvent,
+  UserStatus,
+} from '@vyre/shared';
 import { api, clearAuth, getAuth, patchAuth, setAuth } from './api';
-import { connectWs, disconnectWs, subscribeChannel } from './ws';
+import {
+  connectWs,
+  disconnectWs,
+  sendPresence,
+  subscribeChannel,
+  subscribeCluster,
+  subscribeDm,
+} from './ws';
 
 export interface ClusterWithChannel extends Cluster {
   firstChannelId: string | null;
 }
+
+export type View = 'cluster' | 'home';
+export type FriendsTab = 'online' | 'all' | 'pending' | 'add';
 
 interface RegisterPayload {
   username: string;
   email: string;
   password: string;
   displayName?: string;
+}
+
+interface ProfilePatch {
+  displayName?: string;
+  bio?: string;
+  bannerColor?: string;
+  avatarUrl?: string | null;
+  customStatus?: string | null;
 }
 
 interface AppState {
@@ -22,6 +53,7 @@ interface AppState {
   refreshToken: string | null;
 
   // navegação
+  view: View;
   clusters: ClusterWithChannel[];
   currentClusterId: string | null;
   currentChannelId: string | null;
@@ -31,10 +63,22 @@ interface AppState {
   unread: Record<string, number>;
   wsConnected: boolean;
 
+  // Fase 2: amigos, DMs, perfil
+  friends: FriendEntry[];
+  incoming: FriendRequestEntry[];
+  outgoing: FriendRequestEntry[];
+  dms: DMConversation[];
+  currentDmId: string | null;
+  dmMessages: Record<string, Message[]>;
+  dmUnread: Record<string, number>;
+  dmTyping: Record<string, string[]>;
+  profileUsername: string | null;
+
   // ações
   login: (identifier: string, password: string) => Promise<void>;
   register: (payload: RegisterPayload) => Promise<void>;
   logout: () => void;
+  setView: (view: View) => void;
   loadClusters: () => Promise<void>;
   createCluster: (name: string, description?: string) => Promise<void>;
   joinCluster: (code: string) => Promise<void>;
@@ -46,6 +90,28 @@ interface AppState {
   deleteMessage: (messageId: string) => Promise<void>;
   setWsConnected: (connected: boolean) => void;
   handleWsEvent: (event: ServerEvent) => void;
+
+  // amigos
+  loadFriends: () => Promise<void>;
+  sendFriendRequest: (username: string) => Promise<'sent' | 'accepted'>;
+  acceptFriendRequest: (id: string) => Promise<void>;
+  declineFriendRequest: (id: string) => Promise<void>;
+  removeFriend: (userId: string) => Promise<void>;
+
+  // DMs
+  loadDms: () => Promise<void>;
+  openDm: (userIds: string[], name?: string) => Promise<void>;
+  selectDm: (conversationId: string) => Promise<void>;
+  loadDmMessages: (conversationId: string) => Promise<void>;
+  sendDmMessage: (conversationId: string, content: string) => Promise<void>;
+  editDmMessage: (messageId: string, content: string) => Promise<void>;
+  deleteDmMessage: (messageId: string) => Promise<void>;
+
+  // perfil/presença
+  updateProfile: (patch: ProfilePatch) => Promise<void>;
+  setStatus: (status: UserStatus) => void;
+  openProfile: (username: string) => void;
+  closeProfile: () => void;
 }
 
 async function authPost(
@@ -70,12 +136,45 @@ interface StoredAuthUser {
   createdAt: string;
 }
 
+// timers de "digitando" nas DMs (userId → timeout)
+const dmTypingTimers = new Map<string, number>();
+
+/** Espalha um status novo pra amigos, participantes de DM e membros de cluster */
+function presenceInState(
+  state: AppState,
+  userId: string,
+  status: DisplayStatus,
+): Partial<AppState> {
+  const details: AppState['details'] = {};
+  for (const [cid, d] of Object.entries(state.details)) {
+    details[cid] = {
+      ...d,
+      members: d.members.map((m) =>
+        m.user.id === userId ? { ...m, user: { ...m.user, status } } : m,
+      ),
+    };
+  }
+  return {
+    details,
+    friends: state.friends.map((f) =>
+      f.user.id === userId ? { ...f, user: { ...f.user, status } } : f,
+    ),
+    dms: state.dms.map((c) => ({
+      ...c,
+      participants: c.participants.map((p) =>
+        p.id === userId ? { ...p, status } : p,
+      ),
+    })),
+  };
+}
+
 export const useStore = create<AppState>()(
   persist(
     (set, get) => ({
       user: null,
       accessToken: null,
       refreshToken: null,
+      view: 'cluster',
       clusters: [],
       currentClusterId: null,
       currentChannelId: null,
@@ -84,12 +183,23 @@ export const useStore = create<AppState>()(
       messages: {},
       unread: {},
       wsConnected: false,
+      friends: [],
+      incoming: [],
+      outgoing: [],
+      dms: [],
+      currentDmId: null,
+      dmMessages: {},
+      dmUnread: {},
+      dmTyping: {},
+      profileUsername: null,
 
       async login(identifier, password) {
         const data = await authPost('/api/v1/auth/login', { identifier, password });
         saveSession(data);
         set({ user: data.user, accessToken: data.accessToken, refreshToken: data.refreshToken });
         get().loadClusters();
+        get().loadFriends().catch(() => {});
+        get().loadDms().catch(() => {});
         connectWs(data.accessToken, get().handleWsEvent);
       },
 
@@ -112,6 +222,7 @@ export const useStore = create<AppState>()(
           user: null,
           accessToken: null,
           refreshToken: null,
+          view: 'cluster',
           clusters: [],
           currentClusterId: null,
           currentChannelId: null,
@@ -119,7 +230,24 @@ export const useStore = create<AppState>()(
           details: {},
           messages: {},
           unread: {},
+          friends: [],
+          incoming: [],
+          outgoing: [],
+          dms: [],
+          currentDmId: null,
+          dmMessages: {},
+          dmUnread: {},
+          dmTyping: {},
+          profileUsername: null,
         });
+      },
+
+      setView(view) {
+        set({ view });
+        if (view === 'home') {
+          get().loadFriends().catch(() => {});
+          get().loadDms().catch(() => {});
+        }
       },
 
       async loadClusters() {
@@ -144,7 +272,8 @@ export const useStore = create<AppState>()(
       },
 
       async selectCluster(clusterId) {
-        set({ currentClusterId: clusterId });
+        set({ view: 'cluster', currentClusterId: clusterId });
+        subscribeCluster(clusterId);
         const detail = await api.get<{
           cluster: Cluster;
           channels: Channel[];
@@ -205,6 +334,134 @@ export const useStore = create<AppState>()(
         set({ wsConnected: connected });
       },
 
+      // ---------- Amigos ----------
+
+      async loadFriends() {
+        const data = await api.get<{
+          friends: FriendEntry[];
+          incoming: FriendRequestEntry[];
+          outgoing: FriendRequestEntry[];
+        }>('/api/v1/friends');
+        set({ friends: data.friends, incoming: data.incoming, outgoing: data.outgoing });
+      },
+
+      async sendFriendRequest(username) {
+        const res = await api.post<{ accepted?: boolean }>('/api/v1/friends/requests', {
+          username,
+        });
+        await get().loadFriends();
+        return res.accepted ? 'accepted' : 'sent';
+      },
+
+      async acceptFriendRequest(id) {
+        await api.post(`/api/v1/friends/requests/${id}/accept`);
+        await get().loadFriends();
+      },
+
+      async declineFriendRequest(id) {
+        await api.post(`/api/v1/friends/requests/${id}/decline`);
+        await get().loadFriends();
+      },
+
+      async removeFriend(userId) {
+        await api.del(`/api/v1/friends/${userId}`);
+        await get().loadFriends();
+      },
+
+      // ---------- DMs ----------
+
+      async loadDms() {
+        const data = await api.get<{ conversations: DMConversation[] }>('/api/v1/dms');
+        set({ dms: data.conversations });
+      },
+
+      async openDm(userIds, name) {
+        const data = await api.post<{ conversation: DMConversation }>('/api/v1/dms', {
+          userIds,
+          name,
+        });
+        const conv = data.conversation;
+        set((s) => {
+          const rest = s.dms.filter((c) => c.id !== conv.id);
+          return {
+            view: 'home',
+            currentDmId: conv.id,
+            dms: [conv, ...rest],
+            profileUsername: null,
+          };
+        });
+        await get().selectDm(conv.id);
+      },
+
+      async selectDm(conversationId) {
+        set((s) => ({
+          view: 'home',
+          currentDmId: conversationId,
+          dmUnread: { ...s.dmUnread, [conversationId]: 0 },
+          profileUsername: null,
+        }));
+        subscribeDm(conversationId);
+        if (!get().dmMessages[conversationId]) {
+          await get().loadDmMessages(conversationId);
+        }
+      },
+
+      async loadDmMessages(conversationId) {
+        const data = await api.get<{ messages: Message[] }>(
+          `/api/v1/dms/${conversationId}/messages?limit=50`,
+        );
+        set((s) => ({ dmMessages: { ...s.dmMessages, [conversationId]: data.messages } }));
+        subscribeDm(conversationId);
+      },
+
+      async sendDmMessage(conversationId, content) {
+        const data = await api.post<{ message: Message }>(
+          `/api/v1/dms/${conversationId}/messages`,
+          { content },
+        );
+        set((s) => {
+          const list = s.dmMessages[conversationId] ?? [];
+          if (list.some((m) => m.id === data.message.id)) return s;
+          return {
+            dmMessages: { ...s.dmMessages, [conversationId]: [...list, data.message] },
+            dms: s.dms.map((c) =>
+              c.id === conversationId ? { ...c, lastMessage: data.message } : c,
+            ),
+          };
+        });
+      },
+
+      async editDmMessage(messageId, content) {
+        await api.patch(`/api/v1/dm-messages/${messageId}`, { content });
+      },
+
+      async deleteDmMessage(messageId) {
+        await api.del(`/api/v1/dm-messages/${messageId}`);
+      },
+
+      // ---------- Perfil e presença ----------
+
+      async updateProfile(patch) {
+        const data = await api.patch<{ user: CurrentUser }>('/api/v1/users/me', patch);
+        set({ user: data.user });
+      },
+
+      setStatus(status) {
+        // otimista: mostra na hora, o WS espalha pros outros
+        set((s) => (s.user ? { user: { ...s.user, status } } : s));
+        sendPresence(status);
+      },
+
+      openProfile(username) {
+        set({ profileUsername: username });
+      },
+
+      closeProfile() {
+        set({ profileUsername: null });
+      },
+
+      // ---------- Eventos WS ----------
+
       handleWsEvent(event) {
         const state = get();
         if (event.type === 'message:created') {
@@ -237,6 +494,84 @@ export const useStore = create<AppState>()(
               ),
             },
           }));
+        } else if (event.type === 'presence:update') {
+          set((s) => presenceInState(s, event.userId, event.status));
+        } else if (event.type === 'friend:request') {
+          void get().loadFriends();
+        } else if (event.type === 'friend:accepted') {
+          void get().loadFriends();
+        } else if (event.type === 'friend:removed') {
+          void get().loadFriends();
+        } else if (event.type === 'dm:created') {
+          const conv = event.conversation;
+          set((s) => {
+            const exists = s.dms.some((c) => c.id === conv.id);
+            return {
+              dms: exists ? s.dms.map((c) => (c.id === conv.id ? conv : c)) : [conv, ...s.dms],
+            };
+          });
+        } else if (event.type === 'dm:message:created') {
+          const { conversationId, message } = event;
+          const list = state.dmMessages[conversationId] ?? [];
+          if (list.some((m) => m.id === message.id)) return;
+          const isActive = state.currentDmId === conversationId && state.view === 'home';
+          set((s) => ({
+            dmMessages: {
+              ...s.dmMessages,
+              [conversationId]: [...(s.dmMessages[conversationId] ?? []), message],
+            },
+            dms: s.dms.map((c) =>
+              c.id === conversationId ? { ...c, lastMessage: message } : c,
+            ),
+            dmUnread: isActive
+              ? s.dmUnread
+              : { ...s.dmUnread, [conversationId]: (s.dmUnread[conversationId] ?? 0) + 1 },
+          }));
+        } else if (event.type === 'dm:message:edited') {
+          const { conversationId, message } = event;
+          set((s) => ({
+            dmMessages: {
+              ...s.dmMessages,
+              [conversationId]: (s.dmMessages[conversationId] ?? []).map((m) =>
+                m.id === message.id ? message : m,
+              ),
+            },
+          }));
+        } else if (event.type === 'dm:message:deleted') {
+          const { conversationId, id } = event;
+          set((s) => ({
+            dmMessages: {
+              ...s.dmMessages,
+              [conversationId]: (s.dmMessages[conversationId] ?? []).filter(
+                (m) => m.id !== id,
+              ),
+            },
+          }));
+        } else if (event.type === 'dm:typing') {
+          const key = `${event.conversation}:${event.userId}`;
+          set((s) => {
+            const current = s.dmTyping[event.conversation] ?? [];
+            if (current.includes(event.userId)) return s;
+            return {
+              dmTyping: { ...s.dmTyping, [event.conversation]: [...current, event.userId] },
+            };
+          });
+          const old = dmTypingTimers.get(key);
+          if (old) window.clearTimeout(old);
+          dmTypingTimers.set(
+            key,
+            window.setTimeout(() => {
+              set((s) => ({
+                dmTyping: {
+                  ...s.dmTyping,
+                  [event.conversation]: (s.dmTyping[event.conversation] ?? []).filter(
+                    (id) => id !== event.userId,
+                  ),
+                },
+              }));
+              dmTypingTimers.delete(key);
+            }, 5000),
+          );
         }
       },
     }),
@@ -263,6 +598,8 @@ export function bootstrapSession() {
     });
     connectWs(auth.accessToken, useStore.getState().handleWsEvent);
     store.loadClusters().catch(() => {});
+    store.loadFriends().catch(() => {});
+    store.loadDms().catch(() => {});
   }
 }
 
@@ -271,3 +608,6 @@ export function syncTokensFromStorage() {
   const auth = getAuth();
   if (auth) patchAuth(auth);
 }
+
+// Helpers de UI p/ presence
+export type { PublicUser };

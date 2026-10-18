@@ -8,6 +8,8 @@ import { env } from './env';
 import { authRoutes } from './routes/auth';
 import { clusterRoutes } from './routes/clusters';
 import { channelRoutes } from './routes/channels';
+import { friendRoutes } from './routes/friends';
+import { dmRoutes } from './routes/dms';
 import { verifyAccessToken } from './lib/auth';
 import { registerWs } from './ws';
 
@@ -27,6 +29,17 @@ export async function buildApp() {
 
   await app.register(cors, { origin: env.corsOrigins });
   await app.register(websocket, { options: { maxPayload: 256 * 1024 } });
+
+  // JSON tolerando corpo vazio (DELETEs com Content-Type: application/json)
+  app.addContentTypeParser('application/json', { parseAs: 'string' }, (_req, body, done) => {
+    const raw = typeof body === 'string' ? body.trim() : '';
+    if (!raw) return done(null, undefined);
+    try {
+      done(null, JSON.parse(raw));
+    } catch (err) {
+      done(err as Error, undefined);
+    }
+  });
 
   // Autenticação por JWT em toda rota /api exceto as abertas
   app.addHook('onRequest', async (request, reply) => {
@@ -58,6 +71,8 @@ export async function buildApp() {
   await app.register(authRoutes, { prefix: '/api/v1/auth' });
   await app.register(clusterRoutes, { prefix: '/api/v1' });
   await app.register(channelRoutes, { prefix: '/api/v1' });
+  await app.register(friendRoutes, { prefix: '/api/v1' });
+  await app.register(dmRoutes, { prefix: '/api/v1' });
 
   registerWs(app);
 

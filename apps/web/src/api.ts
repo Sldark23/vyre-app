@@ -64,7 +64,7 @@ async function request<T>(
   const res = await fetch(path, {
     method: options.method ?? 'GET',
     headers: {
-      'Content-Type': 'application/json',
+      ...(options.body !== undefined ? { 'Content-Type': 'application/json' } : {}),
       ...(auth?.accessToken ? { Authorization: `Bearer ${auth.accessToken}` } : {}),
     },
     body: options.body !== undefined ? JSON.stringify(options.body) : undefined,
