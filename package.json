@@ -1,0 +1,15 @@
+{
+  "name": "vyre",
+  "private": true,
+  "version": "0.1.0",
+  "description": "Vyre — sua comunidade, seu jeito",
+  "packageManager": "pnpm@12.14.0",
+  "scripts": {
+    "dev:api": "pnpm --filter @vyre/api dev",
+    "dev:web": "pnpm --filter @vyre/web dev",
+    "build:web": "pnpm --filter @vyre/web build",
+    "start:api": "pnpm --filter @vyre/api start",
+    "migrate": "pnpm --filter @vyre/api migrate",
+    "typecheck": "pnpm -r typecheck"
+  }
+}
