@@ -4,6 +4,8 @@ import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   plugins: [react()],
+  // SPA servida em https://vyre.zeninhost.xyz/app/ (a landing fica na raiz)
+  base: '/app/',
   resolve: {
     alias: {
       '@vyre/shared': fileURLToPath(new URL('../../packages/shared/src/index.ts', import.meta.url)),

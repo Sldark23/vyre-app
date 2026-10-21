@@ -12,6 +12,7 @@ import { friendRoutes } from './routes/friends';
 import { dmRoutes } from './routes/dms';
 import { voiceRoutes } from './routes/voice';
 import { uploadRoutes } from './routes/uploads';
+import { billingRoutes } from './routes/billing';
 import { verifyAccessToken } from './lib/auth';
 import { registerWs } from './ws';
 
@@ -22,6 +23,7 @@ const OPEN_ROUTES = [
   '/api/v1/auth/refresh',
   '/api/v1/auth/logout',
   '/api/v1/voice/webhook',
+  '/api/v1/webhooks/mercadopago',
 ];
 
 export async function buildApp() {
@@ -78,6 +80,7 @@ export async function buildApp() {
   await app.register(dmRoutes, { prefix: '/api/v1' });
   await app.register(voiceRoutes, { prefix: '/api/v1' });
   await app.register(uploadRoutes, { prefix: '/api/v1' });
+  await app.register(billingRoutes, { prefix: '/api/v1' });
 
   registerWs(app);
 

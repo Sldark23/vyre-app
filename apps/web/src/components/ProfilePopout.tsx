@@ -2,7 +2,7 @@ import { useEffect, useState } from 'react';
 import type { PublicProfile } from '@vyre/shared';
 import { api, ApiError } from '../api';
 import { useStore } from '../store';
-import { XIcon } from './Icons';
+import { SparkleIcon, XIcon } from './Icons';
 
 export default function ProfilePopout() {
   const username = useStore((s) => s.profileUsername);
@@ -82,7 +82,14 @@ export default function ProfilePopout() {
 
         {p && (
           <div className="profile-body">
-            <div className="profile-name">{p.user.displayName}</div>
+            <div className="profile-name">
+              {p.user.displayName}
+              {p.user.plus && (
+                <span className="plus-badge" title="Assinante Vyre+">
+                  <SparkleIcon size={13} />
+                </span>
+              )}
+            </div>
             <div className="profile-username">
               @{p.user.username}
               <span className={`dot inline ${p.user.status}`} />

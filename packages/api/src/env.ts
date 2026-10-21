@@ -41,6 +41,9 @@ export const env = {
   livekitKey: process.env.VYRE_LIVEKIT_KEY ?? '',
   livekitSecret: process.env.VYRE_LIVEKIT_SECRET ?? '',
   jwtSecret,
+  // Mercado Pago (Vyre+) — token de acesso da conta MP; vazio = pagamentos off
+  mpAccessToken: process.env.VYRE_MP_ACCESS_TOKEN ?? '',
+  mpApiUrl: (process.env.VYRE_MP_API_URL ?? 'https://api.mercadopago.com').replace(/\/+$/, ''),
   serveWeb: process.env.VYRE_SERVE_WEB !== '0',
   corsOrigins: (process.env.VYRE_CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173')
     .split(',')

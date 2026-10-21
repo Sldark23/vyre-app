@@ -155,6 +155,22 @@ Disparado quando você é kickado ou o cluster é apagado (tópico do usuário +
 
 **GET `/clusters/:id`** agora devolve `myRole` e `members[].role`.
 
+## Fase 5: Vyre+ (assinatura via Mercado Pago)
+
+| Método | Rota | Descrição |
+|---|---|---|
+| GET | `/billing/plus` | status da assinatura (`{active, until, price, configured}`). `configured=false` se `VYRE_MP_ACCESS_TOKEN` não definido no servidor. |
+| POST | `/billing/plus/checkout` | inicia assinatura (Preapproval Plan). Retorna `{init_point, preapproval_id}` ou 503 se pagamentos desativados. Reusa preapproval `pending` do usuário se existir. |
+| POST | `/webhooks/mercadopago` | webhook do Mercado Pago (rota aberta). Re-busca a preapproval na API do MP (nunca confia no payload). Status `authorized` → define `users.plus_until = now() + 1 mês`. Status `cancelled/paused` → mantém benefício até fim do período. Sempre retorna 200 para evitar retentativas. |
+
+**Variáveis de ambiente:**
+- `VYRE_MP_ACCESS_TOKEN` — token de acesso Mercado Pago (vazio = pagamentos desativados, default vazio)
+- `VYRE_MP_API_URL` — URL base da API MP (default `https://api.mercadopago.com`)
+
+**Entitlement:** `plus = users.plus_until > now()`. Flag `plus` incluída em `PublicUser` (`/auth/me`, `/users/:username`, membros do cluster, DMs, amigos) para badge visual no front.
+
+**URL de retorno:** `back_url = ${VYRE_PUBLIC_URL}/app?assinatura=ok` (padrão `https://vyre.zeninhost.xyz/app?assinatura=ok`).
+
 ## Exemplo completo (curl)
 
 ```bash

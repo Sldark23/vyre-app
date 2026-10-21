@@ -13,6 +13,8 @@ export interface PublicUser {
   bio: string;
   status: DisplayStatus;
   customStatus: string | null;
+  /** Assinante Vyre+ ativo */
+  plus: boolean;
 }
 
 export interface CurrentUser extends PublicUser {

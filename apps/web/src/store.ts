@@ -80,6 +80,7 @@ interface AppState {
   dmTyping: Record<string, string[]>;
   profileUsername: string | null;
   settingsOpen: boolean;
+  plusOpen: boolean;
 
   // Fase 3: voz (LiveKit)
   voiceParticipants: Record<string, VoiceParticipant[]>; // por channelId
@@ -144,6 +145,8 @@ interface AppState {
   closeProfile: () => void;
   openSettings: () => void;
   closeSettings: () => void;
+  openPlus: () => void;
+  closePlus: () => void;
 
   // voz
   setVoiceParticipants: (channelId: string, participants: VoiceParticipant[]) => void;
@@ -258,6 +261,7 @@ export const useStore = create<AppState>()(
       dmTyping: {},
       profileUsername: null,
       settingsOpen: false,
+      plusOpen: false,
       voiceParticipants: {},
       activeVoice: null,
       speakingIds: [],
@@ -646,6 +650,14 @@ export const useStore = create<AppState>()(
 
       closeSettings() {
         set({ settingsOpen: false });
+      },
+
+      openPlus() {
+        set({ plusOpen: true });
+      },
+
+      closePlus() {
+        set({ plusOpen: false });
       },
 
       // ---------- Voz ----------

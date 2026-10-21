@@ -288,6 +288,7 @@ export async function friendRoutes(app: FastifyInstance) {
         bio: user.bio,
         status: user.status,
         customStatus: user.custom_status,
+        plus: !!user.plus_until && new Date(user.plus_until as string).getTime() > Date.now(),
         createdAt: user.created_at,
       },
     });

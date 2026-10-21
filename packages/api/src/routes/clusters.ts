@@ -158,7 +158,7 @@ export async function clusterRoutes(app: FastifyInstance) {
       query(`SELECT * FROM channels WHERE cluster_id = $1 ORDER BY position`, [id]),
       query(
         `SELECT m.nickname, m.joined_at, m.role, u.id, u.username, u.display_name, u.avatar_url,
-                u.banner_color, u.bio, u.status
+                u.banner_color, u.bio, u.status, u.plus_until
          FROM cluster_members m JOIN users u ON u.id = m.user_id
          WHERE m.cluster_id = $1 ORDER BY u.display_name LIMIT 200`,
         [id],

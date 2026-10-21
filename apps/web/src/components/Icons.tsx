@@ -154,6 +154,15 @@ export function ShieldIcon(props: IconProps) {
   );
 }
 
+export function SparkleIcon(props: IconProps) {
+  return (
+    <svg {...base(props)}>
+      <path d="M12 3l1.9 5.1L19 10l-5.1 1.9L12 17l-1.9-5.1L5 10l5.1-1.9L12 3Z" />
+      <path d="M19 15.5l.9 2.1L22 18.5l-2.1.9-.9 2.1-.9-2.1-2.1-.9 2.1-.9.9-2.1Z" />
+    </svg>
+  );
+}
+
 export function TrashIcon(props: IconProps) {
   return (
     <svg {...base(props)}>

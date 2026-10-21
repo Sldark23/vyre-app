@@ -9,6 +9,7 @@ import CommandPalette from './components/CommandPalette';
 import FriendsHome from './components/FriendsHome';
 import ProfilePopout from './components/ProfilePopout';
 import ClusterSettingsModal from './components/ClusterSettingsModal';
+import PlusModal from './components/PlusModal';
 
 export default function App() {
   const user = useStore((s) => s.user);
@@ -17,6 +18,7 @@ export default function App() {
   const view = useStore((s) => s.view);
   const profileUsername = useStore((s) => s.profileUsername);
   const settingsOpen = useStore((s) => s.settingsOpen);
+  const plusOpen = useStore((s) => s.plusOpen);
 
   useEffect(() => {
     bootstrapSession();
@@ -53,6 +55,7 @@ export default function App() {
       <CommandPalette />
       {profileUsername && <ProfilePopout />}
       {settingsOpen && <ClusterSettingsModal />}
+      {plusOpen && <PlusModal onClose={() => useStore.getState().closePlus()} />}
       <div className={`ws-pill ${wsConnected ? 'on' : ''}`}>
         {wsConnected ? '● ao vivo' : '○ desconectado'}
       </div>

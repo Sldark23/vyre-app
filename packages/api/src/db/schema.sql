@@ -158,3 +158,21 @@ ALTER TABLE messages
   ADD COLUMN IF NOT EXISTS attachments jsonb NOT NULL DEFAULT '[]'::jsonb;
 ALTER TABLE dm_messages
   ADD COLUMN IF NOT EXISTS attachments jsonb NOT NULL DEFAULT '[]'::jsonb;
+
+-- ============ Fase 5: Vyre+ (assinatura via Mercado Pago) ============
+-- Assinante Vyre+ enquanto plus_until > now()
+ALTER TABLE users
+  ADD COLUMN IF NOT EXISTS plus_until timestamptz;
+
+CREATE TABLE IF NOT EXISTS subscriptions (
+  id uuid PRIMARY KEY DEFAULT gen_random_uuid(),
+  user_id uuid NOT NULL REFERENCES users(id) ON DELETE CASCADE,
+  mp_preapproval_id text UNIQUE,
+  status text NOT NULL DEFAULT 'pending'
+    CHECK (status IN ('pending','authorized','cancelled','paused')),
+  amount numeric(10,2) NOT NULL DEFAULT 19.90,
+  current_period_end timestamptz,
+  created_at timestamptz NOT NULL DEFAULT now(),
+  updated_at timestamptz NOT NULL DEFAULT now()
+);
+CREATE INDEX IF NOT EXISTS subscriptions_user_idx ON subscriptions(user_id);

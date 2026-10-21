@@ -1,5 +1,5 @@
 import { useStore } from '../store';
-import { CrownIcon, ShieldIcon, XIcon } from './Icons';
+import { CrownIcon, ShieldIcon, SparkleIcon, XIcon } from './Icons';
 
 export default function MemberBar() {
   const currentClusterId = useStore((s) => s.currentClusterId);
@@ -43,6 +43,11 @@ export default function MemberBar() {
         <span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
           {m.nickname || m.user.displayName}
         </span>
+        {m.user.plus && (
+          <span className="plus-badge" title="Vyre+">
+            <SparkleIcon size={12} />
+          </span>
+        )}
         {m.role === 'owner' && (
           <span className="role-badge owner" title="Dono">
             <CrownIcon size={13} />

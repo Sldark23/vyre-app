@@ -2,7 +2,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { UserStatus } from '@vyre/shared';
 import { useStore } from '../store';
 import { ApiError, uploadFile } from '../api';
-import { ImageIcon, LogoutIcon, UserIcon } from './Icons';
+import { ImageIcon, LogoutIcon, SparkleIcon, UserIcon } from './Icons';
 
 const STATUS_OPTIONS: { value: UserStatus; label: string }[] = [
   { value: 'online', label: 'Online' },
@@ -16,6 +16,7 @@ export default function UserPanel() {
   const setStatus = useStore((s) => s.setStatus);
   const updateProfile = useStore((s) => s.updateProfile);
   const openProfile = useStore((s) => s.openProfile);
+  const openPlus = useStore((s) => s.openPlus);
   const logout = useStore((s) => s.logout);
   const [open, setOpen] = useState(false);
   const [custom, setCustom] = useState('');
@@ -59,7 +60,14 @@ export default function UserPanel() {
           <div className={`dot ${status} in-avatar`} />
         </div>
         <div className="info">
-          <div className="name">{user.displayName}</div>
+          <div className="name">
+            {user.displayName}
+            {user.plus && (
+              <span className="plus-badge" title="Assinante Vyre+">
+                <SparkleIcon size={12} />
+              </span>
+            )}
+          </div>
           <div className="tag">
             {user.customStatus || `@${user.username}`}
           </div>
@@ -128,6 +136,15 @@ export default function UserPanel() {
             }}
           >
             <UserIcon size={15} /> Ver meu perfil
+          </button>
+          <button
+            className="status-opt plus-opt"
+            onClick={() => {
+              setOpen(false);
+              openPlus();
+            }}
+          >
+            <SparkleIcon size={15} /> {user.plus ? 'Vyre+ ativo' : 'Seja Vyre+'}
           </button>
           <button
             className="status-opt danger"

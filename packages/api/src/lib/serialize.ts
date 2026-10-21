@@ -3,6 +3,7 @@ import type { Cluster, Channel, Message, PublicUser } from '@vyre/shared';
 /* eslint-disable @typescript-eslint/no-explicit-any */
 
 export function toPublicUser(row: any): PublicUser {
+  const plusUntil = row.plus_until ? new Date(row.plus_until as string) : null;
   return {
     id: row.id,
     username: row.username,
@@ -12,6 +13,7 @@ export function toPublicUser(row: any): PublicUser {
     bio: row.bio,
     status: row.status,
     customStatus: row.custom_status ?? null,
+    plus: !!plusUntil && plusUntil.getTime() > Date.now(),
   };
 }
 
@@ -34,6 +36,7 @@ export function rowToMessage(row: any): Message {
       bio: row.u_bio,
       status: row.u_status,
       customStatus: row.u_custom_status ?? null,
+      plus: !!row.u_plus_until && new Date(row.u_plus_until as string).getTime() > Date.now(),
     },
   };
 }
@@ -71,7 +74,8 @@ export const MESSAGE_SELECT = `
   SELECT m.id, m.channel_id, m.content, m.edited_at, m.reply_to, m.created_at, m.attachments,
          u.id AS u_id, u.username AS u_username, u.display_name AS u_display_name,
          u.avatar_url AS u_avatar_url, u.banner_color AS u_banner_color,
-         u.bio AS u_bio, u.status AS u_status, u.custom_status AS u_custom_status
+         u.bio AS u_bio, u.status AS u_status, u.custom_status AS u_custom_status,
+         u.plus_until AS u_plus_until
   FROM messages m
   JOIN users u ON u.id = m.author_id
 `;

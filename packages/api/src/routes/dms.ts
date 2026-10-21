@@ -14,7 +14,8 @@ const DM_MESSAGE_SELECT = `
          NULL AS reply_to, m.created_at, m.attachments,
          u.id AS u_id, u.username AS u_username, u.display_name AS u_display_name,
          u.avatar_url AS u_avatar_url, u.banner_color AS u_banner_color,
-         u.bio AS u_bio, u.status AS u_status, u.custom_status AS u_custom_status
+         u.bio AS u_bio, u.status AS u_status, u.custom_status AS u_custom_status,
+         u.plus_until AS u_plus_until
   FROM dm_messages m
   JOIN users u ON u.id = m.author_id
 `;
@@ -84,6 +85,7 @@ function mapDmMessage(row: Record<string, unknown>): Message {
       bio: row.u_bio,
       status: row.u_status,
       custom_status: row.u_custom_status,
+      plus_until: row.u_plus_until,
     }),
   };
 }
