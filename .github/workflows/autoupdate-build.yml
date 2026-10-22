@@ -1,0 +1,296 @@
+name: Build & Publish AutoUpdate
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      channel:
+        description: 'Release channel'
+        type: choice
+        options: [stable, beta]
+        default: stable
+      version:
+        description: 'Version (e.g., 1.2.3)'
+        required: true
+      notes:
+        description: 'Release notes (markdown)'
+        required: false
+
+env:
+  NODE_VERSION: '20'
+  JAVA_VERSION: '17'
+  ANDROID_SDK_VERSION: '34'
+  VYRE_API_URL: https://vyre.zeninhost.xyz
+
+jobs:
+  # ========== WEB (Linux + Windows) ==========
+  build-web:
+    name: Build Web (Linux/Windows)
+    runs-on: ubuntu-latest
+    strategy:
+      matrix:
+        platform: [linux, windows]
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: apps/web/pnpm-lock.yaml
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Install dependencies
+        run: |
+          cd apps/web
+          pnpm install --frozen-lockfile
+
+      - name: Build Web
+        run: |
+          cd apps/web
+          pnpm run build
+        env:
+          VITE_API_URL: ${{ env.VYRE_API_URL }}/api
+
+      - name: Package Linux AppImage
+        if: matrix.platform == 'linux'
+        run: |
+          cd apps/web
+          npx electron-builder --linux AppImage --publish=never
+        env:
+          VITE_API_URL: ${{ env.VYRE_API_URL }}/api
+
+      - name: Package Windows NSIS
+        if: matrix.platform == 'windows'
+        run: |
+          cd apps/web
+          npx electron-builder --win nsis --publish=never
+        env:
+          VITE_API_URL: ${{ env.VYRE_API_URL }}/api
+
+      - name: Upload Web Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: web-${{ matrix.platform }}
+          path: |
+            apps/web/dist/*.AppImage
+            apps/web/dist/*.exe
+            apps/web/dist/*.blockmap
+          retention-days: 30
+
+  # ========== MOBILE (Android) ==========
+  build-android:
+    name: Build Android APK/AAB
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          submodules: recursive
+          fetch-depth: 0
+
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: ${{ env.NODE_VERSION }}
+          cache: 'pnpm'
+          cache-dependency-path: apps/mobile/pnpm-lock.yaml
+
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: 'temurin'
+          java-version: ${{ env.JAVA_VERSION }}
+          cache: gradle
+
+      - name: Setup Android SDK
+        uses: android-actions/setup-android@v3
+        with:
+          api-level: ${{ env.ANDROID_SDK_VERSION }}
+          ndk-version: r26c
+          build-tools-version: 34.0.0
+          cmdline-tools-version: latest
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 9
+          run_install: false
+
+      - name: Install dependencies
+        run: |
+          cd apps/mobile
+          pnpm install --frozen-lockfile
+
+      - name: Generate Android keystore (if not exists)
+        id: keystore
+        run: |
+          if [ ! -f "$HOME/.android/release.keystore" ]; then
+            echo "Creating keystore..."
+            keytool -genkeypair -v \
+              -keystore "$HOME/.android/release.keystore" \
+              -alias vyre-release \
+              -keyalg RSA \
+              -keysize 2048 \
+              -validity 10000 \
+              -storepass "${{ secrets.ANDROID_KEYSTORE_PASSWORD }}" \
+              -keypass "${{ secrets.ANDROID_KEY_PASSWORD }}" \
+              -dname "CN=Vyre, OU=Mobile, O=Vyre, L=Sao Paulo, ST=SP, C=BR"
+          fi
+          echo "keystore_path=$HOME/.android/release.keystore" >> $GITHUB_OUTPUT
+
+      - name: Create gradle.properties
+        run: |
+          cat > apps/mobile/android/gradle.properties << EOF
+          android.useAndroidX=true
+          android.enableJetifier=true
+          org.gradle.jvmargs=-Xmx4g -XX:MaxMetaspaceSize=512m
+          android.signingConfig.release.storeFile=${{ steps.keystore.outputs.keystore_path }}
+          android.signingConfig.release.storePassword=${{ secrets.ANDROID_KEYSTORE_PASSWORD }}
+          android.signingConfig.release.keyAlias=vyre-release
+          android.signingConfig.release.keyPassword=${{ secrets.ANDROID_KEY_PASSWORD }}
+          VYRE_API_URL=${{ env.VYRE_API_URL }}
+          EOF
+
+      - name: Build Release APK
+        run: |
+          cd apps/mobile/android
+          ./gradlew assembleRelease --no-daemon -Dorg.gradle.workers.max=2
+
+      - name: Build Release AAB (for Play Store if needed)
+        run: |
+          cd apps/mobile/android
+          ./gradlew bundleRelease --no-daemon -Dorg.gradle.workers.max=2
+
+      - name: Upload Android Artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: android
+          path: |
+            apps/mobile/android/app/build/outputs/apk/release/*.apk
+            apps/mobile/android/app/build/outputs/bundle/release/*.aab
+          retention-days: 30
+
+  # ========== CREATE RELEASE & UPLOAD TO AUTOUPDATE ==========
+  publish-autoupdate:
+    name: Publish to AutoUpdate
+    needs: [build-web, build-android]
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' || github.event_name == 'workflow_dispatch'
+    steps:
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+          merge-multiple: false
+
+      - name: List artifacts
+        run: |
+          find artifacts -type f -name "*.AppImage" -o -name "*.exe" -o -name "*.apk" -o -name "*.aab" | sort
+
+      - name: Determine version & channel
+        id: meta
+        run: |
+          if [ "${{ github.event_name }}" = "workflow_dispatch" ]; then
+            VERSION="${{ github.event.inputs.version }}"
+            CHANNEL="${{ github.event.inputs.channel }}"
+            NOTES="${{ github.event.inputs.notes }}"
+          else
+            VERSION="${GITHUB_REF_NAME#v}"
+            CHANNEL="stable"
+            NOTES="Release ${{ GITHUB_REF_NAME }}"
+          fi
+          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "channel=$CHANNEL" >> $GITHUB_OUTPUT
+          echo "notes=$NOTES" >> $GITHUB_OUTPUT
+
+      - name: Upload Linux AppImage
+        if: always() && github.event_name == 'push'
+        run: |
+          FILE=$(find artifacts -name "*.AppImage" | head -1)
+          if [ -f "$FILE" ]; then
+            curl -X POST "${{ env.VYRE_API_URL }}/api/v1/autoupdate/upload" \
+              -H "Authorization: Bearer ${{ secrets.AUTOUPDATE_API_TOKEN }}" \
+              -F "file=@$FILE" \
+              -F "version=${{ steps.meta.outputs.version }}" \
+              -F "channel=${{ steps.meta.outputs.channel }}" \
+              -F "platform=linux" \
+              -F "notes=${{ steps.meta.outputs.notes }}"
+          else
+            echo "No Linux AppImage found"
+          fi
+
+      - name: Upload Windows EXE
+        if: always() && github.event_name == 'push'
+        run: |
+          FILE=$(find artifacts -name "*.exe" | head -1)
+          if [ -f "$FILE" ]; then
+            curl -X POST "${{ env.VYRE_API_URL }}/api/v1/autoupdate/upload" \
+              -H "Authorization: Bearer ${{ secrets.AUTOUPDATE_API_TOKEN }}" \
+              -F "file=@$FILE" \
+              -F "version=${{ steps.meta.outputs.version }}" \
+              -F "channel=${{ steps.meta.outputs.channel }}" \
+              -F "platform=windows" \
+              -F "notes=${{ steps.meta.outputs.notes }}"
+          else
+            echo "No Windows EXE found"
+          fi
+
+      - name: Upload Android APK
+        if: always() && github.event_name == 'push'
+        run: |
+          FILE=$(find artifacts -name "*.apk" | head -1)
+          if [ -f "$FILE" ]; then
+            curl -X POST "${{ env.VYRE_API_URL }}/api/v1/autoupdate/upload" \
+              -H "Authorization: Bearer ${{ secrets.AUTOUPDATE_API_TOKEN }}" \
+              -F "file=@$FILE" \
+              -F "version=${{ steps.meta.outputs.version }}" \
+              -F "channel=${{ steps.meta.outputs.channel }}" \
+              -F "platform=android" \
+              -F "notes=${{ steps.meta.outputs.notes }}"
+          else
+            echo "No Android APK found"
+          fi
+
+      - name: Create GitHub Release
+        if: github.event_name == 'push'
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: v${{ steps.meta.outputs.version }}
+          name: Vyre ${{ steps.meta.outputs.version }}
+          body: ${{ steps.meta.outputs.notes }}
+          draft: false
+          prerelease: ${{ steps.meta.outputs.channel == 'beta' }}
+          files: |
+            artifacts/**/*.AppImage
+            artifacts/**/*.exe
+            artifacts/**/*.apk
+            artifacts/**/*.aab
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Notify AutoUpdate Create Release
+        if: github.event_name == 'push'
+        run: |
+          curl -X POST "${{ env.VYRE_API_URL }}/api/v1/autoupdate/create" \
+            -H "Authorization: Bearer ${{ secrets.AUTOUPDATE_API_TOKEN }}" \
+            -H "Content-Type: application/json" \
+            -d '{
+              "version": "${{ steps.meta.outputs.version }}",
+              "channel": "${{ steps.meta.outputs.channel }}",
+              "notes": "${{ steps.meta.outputs.notes }}",
+              "platforms": ["linux", "windows", "android"],
+              "min_version": "1.0.0"
+            }'

@@ -13,8 +13,10 @@ import { dmRoutes } from './routes/dms';
 import { voiceRoutes } from './routes/voice';
 import { uploadRoutes } from './routes/uploads';
 import { billingRoutes } from './routes/billing';
+import { autoupdateRoutes } from './routes/autoupdate';
 import { verifyAccessToken } from './lib/auth';
 import { registerWs } from './ws';
+import { posthog } from './lib/posthog';
 
 const OPEN_ROUTES = [
   '/api/v1/health',
@@ -24,6 +26,9 @@ const OPEN_ROUTES = [
   '/api/v1/auth/logout',
   '/api/v1/voice/webhook',
   '/api/v1/webhooks/mercadopago',
+  '/api/v1/autoupdate/check',
+  '/api/v1/autoupdate/test',
+  '/api/v1/autoupdate/download/',
 ];
 
 export async function buildApp() {
@@ -81,6 +86,7 @@ export async function buildApp() {
   await app.register(voiceRoutes, { prefix: '/api/v1' });
   await app.register(uploadRoutes, { prefix: '/api/v1' });
   await app.register(billingRoutes, { prefix: '/api/v1' });
+  await app.register(autoupdateRoutes, { prefix: '/api/v1' });
 
   registerWs(app);
 
@@ -114,6 +120,14 @@ export async function buildApp() {
     });
     app.log.info(`Servindo web em ${webDist}`);
   }
+
+  // Graceful shutdown for PostHog
+  const shutdown = async () => {
+    posthog.shutdown();
+    await app.close();
+  };
+  process.on('SIGTERM', shutdown);
+  process.on('SIGINT', shutdown);
 
   return app;
 }
