@@ -1,4 +1,5 @@
 import { env } from '../env';
+import crypto from 'node:crypto';
 
 interface CdnFile {
   filename: string;
@@ -19,17 +20,27 @@ interface ChunkUploadResponse {
   success: boolean;
   uploadId?: string;
   error?: string;
+  receivedChunk?: number;
+  totalChunks?: number;
+}
+
+interface CdnFileRaw {
+  filename: string;
+  size: number;
+  url: string;
 }
 
 interface FilesListResponse {
-  success: boolean;
-  files?: CdnFile[];
+  success?: boolean;
+  count?: number;
+  files?: CdnFileRaw[];
   error?: string;
 }
 
 class CdnClient {
   private baseUrl: string;
   private apiKey: string;
+  private chunkSize: number = 5 * 1024 * 1024; // 5MB
 
   constructor() {
     this.baseUrl = env.cdnBaseUrl.replace(/\/$/, '');
@@ -46,7 +57,6 @@ class CdnClient {
       ...(options.headers as Record<string, string> || {}),
     };
 
-    // Don't set Content-Type for FormData - let browser set it with boundary
     if (!(options.body instanceof FormData)) {
       headers['Content-Type'] = 'application/json';
     }
@@ -64,9 +74,6 @@ class CdnClient {
     return response.json();
   }
 
-  /**
-   * Check CDN health
-   */
   async healthCheck(): Promise<boolean> {
     try {
       const res = await fetch(`${this.baseUrl}/`);
@@ -76,9 +83,6 @@ class CdnClient {
     }
   }
 
-  /**
-   * Upload a single file (multipart/form-data)
-   */
   async uploadFile(file: Buffer, filename: string, mimetype: string): Promise<UploadResponse> {
     const formData = new FormData();
     const blob = new Blob([new Uint8Array(file)], { type: mimetype });
@@ -91,23 +95,34 @@ class CdnClient {
   }
 
   /**
-   * Start a chunked upload - returns uploadId
+   * Generate a valid uploadId (UUID v4) for chunked uploads
+   */
+  private generateUploadId(): string {
+    return crypto.randomUUID();
+  }
+
+  /**
+   * Calculate totalChunks for a given file size
+   */
+  private calculateTotalChunks(totalSize: number): number {
+    return Math.ceil(totalSize / this.chunkSize);
+  }
+
+  /**
+   * Start a chunked upload - generates a valid UUID uploadId
    */
   async startChunkedUpload(
     filename: string,
     mimetype: string,
-    totalSize: number,
-    totalChunks: number
+    totalSize: number
   ): Promise<ChunkUploadResponse> {
-    // The CDN doesn't have a dedicated "start" endpoint, we just upload chunks
-    // and use a generated uploadId. We'll use the first chunk upload to establish it.
-    // For compatibility, we return a generated uploadId here.
-    const uploadId = `vyre-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-    return { success: true, uploadId };
+    const uploadId = this.generateUploadId();
+    const totalChunks = this.calculateTotalChunks(totalSize);
+    return { success: true, uploadId, totalChunks };
   }
 
   /**
-   * Upload a chunk
+   * Upload a chunk to CDN
    */
   async uploadChunk(
     uploadId: string,
@@ -147,27 +162,31 @@ class CdnClient {
     });
   }
 
-  /**
-   * List all files
-   */
-  async listFiles(): Promise<FilesListResponse> {
-    return this.request<FilesListResponse>('/api/files', {
+  async listFiles(): Promise<{ success: boolean; files?: CdnFile[]; error?: string }> {
+    const res = await this.request<FilesListResponse>('/api/files', {
       method: 'GET',
     });
+    // Transform CDN response format to internal format
+    if (res.files) {
+      const files: CdnFile[] = res.files.map(f => ({
+        filename: f.filename,
+        url: f.url,
+        size: f.size,
+        mimetype: f.filename.endsWith('.mp4') || f.filename.endsWith('.webm') || f.filename.endsWith('.mov') 
+          ? 'video/mp4' : 'image/jpeg',
+        createdAt: new Date().toISOString(),
+      }));
+      return { success: true, files };
+    }
+    return { success: false, error: res.error || 'Unknown error' };
   }
 
-  /**
-   * Delete a file
-   */
   async deleteFile(filename: string): Promise<{ success: boolean; error?: string }> {
     return this.request(`/api/files/${encodeURIComponent(filename)}`, {
       method: 'DELETE',
     });
   }
 
-  /**
-   * Get public URL for a file
-   */
   getFileUrl(filename: string): string {
     return `${this.baseUrl}/files/${encodeURIComponent(filename)}`;
   }
@@ -176,13 +195,13 @@ class CdnClient {
 export const cdn = new CdnClient();
 
 /**
- * Helper: upload a file from a Fastify multipart stream
+ * Helper: upload a file from a Fastify multipart stream (normal upload)
  */
 export async function uploadToCdn(
   file: AsyncIterable<Buffer>,
   filename: string,
   mimetype: string,
-  maxSize: number = 50 * 1024 * 1024 // 50MB default
+  maxSize: number = 50 * 1024 * 1024
 ): Promise<{ url: string; filename: string; size: number }> {
   const chunks: Buffer[] = [];
   let totalSize = 0;
@@ -210,64 +229,56 @@ export async function uploadToCdn(
 }
 
 /**
- * Helper: upload a file via chunked upload (for large files)
+ * Helper: upload a file via chunked upload (for large files/videos)
+ * Returns uploadId for client to continue uploading chunks
  */
-export async function uploadToCdnChunked(
-  file: AsyncIterable<Buffer>,
+export async function startCdnChunkedUpload(
   filename: string,
   mimetype: string,
-  chunkSize: number = 5 * 1024 * 1024, // 5MB chunks
-  maxSize: number = 200 * 1024 * 1024 // 200MB default
+  totalSize: number
+): Promise<{ uploadId: string; chunkSize: number; totalChunks: number }> {
+  const res = await cdn.startChunkedUpload(filename, mimetype, totalSize);
+  if (!res.success || !res.uploadId) {
+    throw new Error(res.error || 'Failed to start chunked upload');
+  }
+  return {
+    uploadId: res.uploadId,
+    chunkSize: cdn['chunkSize'],
+    totalChunks: res.totalChunks || Math.ceil(totalSize / (5 * 1024 * 1024)),
+  };
+}
+
+/**
+ * Upload a single chunk to an existing chunked upload
+ */
+export async function uploadCdnChunk(
+  uploadId: string,
+  chunk: Buffer,
+  index: number,
+  totalChunks: number,
+  totalSize: number,
+  mimetype: string
+): Promise<{ success: boolean; error?: string }> {
+  const res = await cdn.uploadChunk(uploadId, chunk, index, totalChunks, totalSize, mimetype);
+  return { success: res.success, error: res.error };
+}
+
+/**
+ * Complete a chunked upload
+ */
+export async function completeCdnChunkedUpload(
+  uploadId: string,
+  totalChunks: number,
+  filename: string,
+  mimetype: string
 ): Promise<{ url: string; filename: string; size: number }> {
-  const uploadId = `vyre-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-  let index = 0;
-  let totalSize = 0;
-  let chunkBuffer: Buffer[] = [];
-  let chunkBufferSize = 0;
-
-  for await (const chunk of file) {
-    totalSize += chunk.length;
-    if (totalSize > maxSize) {
-      throw new Error(`File too large (max ${maxSize} bytes)`);
-    }
-
-    chunkBuffer.push(chunk);
-    chunkBufferSize += chunk.length;
-
-    // When chunk buffer reaches chunkSize, upload it
-    while (chunkBufferSize >= chunkSize) {
-      const combined = Buffer.concat(chunkBuffer);
-      const toUpload = combined.subarray(0, chunkSize);
-      chunkBuffer = [combined.subarray(chunkSize)];
-      chunkBufferSize = chunkBuffer[0].length;
-
-      const res = await cdn.uploadChunk(uploadId, toUpload, index, 0, totalSize, mimetype);
-      if (!res.success) {
-        throw new Error(res.error || `Chunk ${index} upload failed`);
-      }
-      index++;
-    }
-  }
-
-  // Upload remaining chunks
-  if (chunkBufferSize > 0) {
-    const combined = Buffer.concat(chunkBuffer);
-    const res = await cdn.uploadChunk(uploadId, combined, index, 0, totalSize, mimetype);
-    if (!res.success) {
-      throw new Error(res.error || `Chunk ${index} upload failed`);
-    }
-    index++;
-  }
-
-  // Complete the upload
-  const res = await cdn.completeChunkedUpload(uploadId, index, filename, mimetype);
+  const res = await cdn.completeChunkedUpload(uploadId, totalChunks, filename, mimetype);
   if (!res.success || !res.url || !res.filename) {
     throw new Error(res.error || 'CDN complete failed');
   }
-
   return {
     url: res.url,
     filename: res.filename,
-    size: totalSize,
+    size: 0, // CDN doesn't return size on complete
   };
 }

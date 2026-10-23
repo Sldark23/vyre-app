@@ -2,12 +2,11 @@ import type { FastifyInstance } from 'fastify';
 import multipart from '@fastify/multipart';
 import { env } from '../env';
 import { requireAuth } from './auth';
-import { uploadToCdn, uploadToCdnChunked, cdn } from '../lib/cdn';
+import { uploadToCdn, startCdnChunkedUpload, uploadCdnChunk, completeCdnChunkedUpload, cdn } from '../lib/cdn';
 import crypto from 'node:crypto';
 
 const MAX_NORMAL_UPLOAD = 20 * 1024 * 1024; // 20MB - above this uses chunked
 const MAX_CHUNKED_UPLOAD = 200 * 1024 * 1024; // 200MB max for chunked
-const CHUNK_SIZE = 5 * 1024 * 1024; // 5MB chunks
 
 const ALLOWED_IMAGES: Record<string, string> = {
   'image/png': 'png',
@@ -25,12 +24,7 @@ const ALLOWED_VIDEOS: Record<string, string> = {
 const ALLOWED = { ...ALLOWED_IMAGES, ...ALLOWED_VIDEOS };
 
 export async function uploadRoutes(app: FastifyInstance) {
-  // Register multipart for normal uploads
-  await app.register(multipart, {
-    limits: { fileSize: MAX_NORMAL_UPLOAD, files: 1, fields: 0 },
-  });
-
-  // Register multipart for chunked uploads (larger limits)
+  // Register multipart once with max limits (validated per-route)
   await app.register(multipart, {
     limits: { fileSize: MAX_CHUNKED_UPLOAD, files: 1, fields: 10 },
   });
@@ -99,22 +93,21 @@ export async function uploadRoutes(app: FastifyInstance) {
 
   // ============ UPLOAD EM CHUNKS (vídeos SEMPRE + imagens > 20MB) ============
   
-  // Iniciar upload em chunks
+  // Iniciar upload em chunks - gera uploadId UUID válido e calcula totalChunks
   app.post('/uploads/chunked/start', async (request, reply) => {
     requireAuth(request);
     if (!useCdn) {
       return reply.code(501).send({ error: 'Upload em chunks requer CDN configurado' });
     }
 
-    const { filename, mimetype, totalSize, totalChunks } = request.body as {
+    const { filename, mimetype, totalSize } = request.body as {
       filename: string;
       mimetype: string;
       totalSize: number;
-      totalChunks: number;
     };
 
-    if (!filename || !mimetype || !totalSize || !totalChunks) {
-      return reply.code(400).send({ error: 'Campos obrigatórios: filename, mimetype, totalSize, totalChunks' });
+    if (!filename || !mimetype || !totalSize) {
+      return reply.code(400).send({ error: 'Campos obrigatórios: filename, mimetype, totalSize' });
     }
 
     if (!ALLOWED[mimetype]) {
@@ -126,9 +119,12 @@ export async function uploadRoutes(app: FastifyInstance) {
     }
 
     try {
-      const uploadId = `vyre-${Date.now()}-${Math.random().toString(36).slice(2, 9)}`;
-      await cdn.startChunkedUpload(filename, mimetype, totalSize, totalChunks);
-      return reply.send({ uploadId, chunkSize: CHUNK_SIZE });
+      const res = await startCdnChunkedUpload(filename, mimetype, totalSize);
+      return reply.send({ 
+        uploadId: res.uploadId, 
+        chunkSize: res.chunkSize, 
+        totalChunks: res.totalChunks 
+      });
     } catch (err) {
       request.log.error(err);
       return reply.code(500).send({ error: 'Falha ao iniciar upload em chunks' });
@@ -153,7 +149,7 @@ export async function uploadRoutes(app: FastifyInstance) {
 
     try {
       const buffer = await file.toBuffer();
-      const res = await cdn.uploadChunk(uploadId, buffer, index, totalChunks, totalSize, mimetype);
+      const res = await uploadCdnChunk(uploadId, buffer, index, totalChunks, totalSize, mimetype);
       if (!res.success) {
         return reply.code(500).send({ error: res.error || 'Falha no upload do chunk' });
       }
@@ -183,10 +179,7 @@ export async function uploadRoutes(app: FastifyInstance) {
     }
 
     try {
-      const res = await cdn.completeChunkedUpload(uploadId, totalChunks, filename, mimetype);
-      if (!res.success || !res.url || !res.filename) {
-        return reply.code(500).send({ error: res.error || 'Falha ao finalizar upload' });
-      }
+      const res = await completeCdnChunkedUpload(uploadId, totalChunks, filename, mimetype);
       return reply.code(201).send({ url: res.url, filename: res.filename, size: 0 });
     } catch (err) {
       request.log.error(err);

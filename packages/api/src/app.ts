@@ -28,6 +28,7 @@ const OPEN_ROUTES = [
   '/api/v1/autoupdate/check',
   '/api/v1/autoupdate/test',
   '/api/v1/autoupdate/download/',
+  '/api/v1/uploads/health',
 ];
 
 export async function buildApp() {
