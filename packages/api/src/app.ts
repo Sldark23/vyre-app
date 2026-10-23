@@ -16,7 +16,6 @@ import { billingRoutes } from './routes/billing';
 import { autoupdateRoutes } from './routes/autoupdate';
 import { verifyAccessToken } from './lib/auth';
 import { registerWs } from './ws';
-import { posthog } from './lib/posthog';
 
 const OPEN_ROUTES = [
   '/api/v1/health',
@@ -121,9 +120,7 @@ export async function buildApp() {
     app.log.info(`Servindo web em ${webDist}`);
   }
 
-  // Graceful shutdown for PostHog
   const shutdown = async () => {
-    posthog.shutdown();
     await app.close();
   };
   process.on('SIGTERM', shutdown);
