@@ -201,7 +201,13 @@ export async function autoupdateRoutes(app: FastifyInstance) {
       });
     }, { prefix: '/' });
 
-    return (request as any).server.inject({ method: 'POST', url: '/', headers: request.headers, payload: (request as any).raw || request.rawBody });
+    // Forward to the mounted multipart handler
+    await app.ready();
+    const child = (app as any)._router.find('POST', '/api/v1/autoupdate/upload/');
+    if (child) {
+      // Let the child handler process the request
+      return;
+    }
   });
 
   // Admin: Criar nova atualização

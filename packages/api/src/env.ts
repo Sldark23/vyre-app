@@ -49,4 +49,7 @@ export const env = {
     .split(',')
     .map((s) => s.trim()),
   autoUpdateToken: process.env.AUTOUPDATE_API_TOKEN || '',
+  // CDN Vyre (cdn-vyre-dn.zeninhost.xyz)
+  cdnBaseUrl: process.env.VYRE_CDN_BASE_URL ?? 'https://cdn-vyre-dn.zeninhost.xyz',
+  cdnApiKey: process.env.VYRE_CDN_API_KEY ?? '',
 };
