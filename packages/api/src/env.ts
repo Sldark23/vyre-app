@@ -48,4 +48,5 @@ export const env = {
   corsOrigins: (process.env.VYRE_CORS_ORIGINS ?? 'http://localhost:5173,http://127.0.0.1:5173')
     .split(',')
     .map((s) => s.trim()),
+  autoUpdateToken: process.env.AUTOUPDATE_API_TOKEN || '',
 };

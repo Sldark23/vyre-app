@@ -117,6 +117,93 @@ export async function autoupdateRoutes(app: FastifyInstance) {
     }
   });
 
+  // CI/Upload: Criar nova atualização via multipart
+  app.post('/autoupdate/upload', async (request, reply) => {
+    // Tentar autenticar com token de admin ou via header
+    const header = request.headers.authorization;
+    const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
+    if (!token || token !== env.autoUpdateToken) {
+      // Também permitir se for admin autenticado
+      try {
+        const userId = requireAuth(request);
+        const user = await query('SELECT username FROM users WHERE id = $1', [userId]);
+        if (!user.rows[0] || user.rows[0].username !== 'admin') {
+          return reply.code(403).send({ error: 'Não autorizado' });
+        }
+      } catch {
+        return reply.code(401).send({ error: 'Não autenticado' });
+      }
+    }
+
+    await app.register(async (child) => {
+      await child.register((await import('@fastify/multipart')).default, {
+        limits: { fileSize: 150 * 1024 * 1024, files: 1, fields: 50 },
+      });
+
+      child.post('/', async (req, rep) => {
+        const file = await req.file();
+        if (!file) return rep.code(400).send({ error: 'Nenhum arquivo enviado' });
+
+        const fields: Record<string, string> = {};
+        for (const [k, v] of Object.entries(req.body as Record<string, unknown> || {})) {
+          if (v && typeof (v as any) === 'object' && 'value' in (v as any)) {
+            fields[k] = (v as any).value;
+          } else if (typeof v === 'string') {
+            fields[k] = v;
+          }
+        }
+
+        const version = fields.version || fields.versionName;
+        const buildNumber = parseInt(fields.buildNumber || fields.versionCode || '1', 10);
+        const channel = (fields.channel as UpdateChannel) || 'stable';
+        const releaseNotes = fields.releaseNotes || fields.notes || '';
+        const platform = (fields.platform as 'android' | 'ios') || 'android';
+
+        if (!version || !/^\d+\.\d+\.\d+$/.test(version)) {
+          return rep.code(400).send({ error: 'Versão inválida' });
+        }
+        if (!['stable', 'betatest', 'restrito'].includes(channel)) {
+          return rep.code(400).send({ error: 'Canal inválido' });
+        }
+
+        const fs = await import('node:fs');
+        const fsPromises = await import('node:fs/promises');
+        const path = await import('node:path');
+        const crypto = await import('node:crypto');
+
+        const uploadsDir = path.join(process.cwd(), '..', 'uploads', 'apks');
+        await fsPromises.mkdir(uploadsDir, { recursive: true });
+
+        const ext = file.filename?.endsWith('.aab') ? 'aab' : 'apk';
+        const apkFilename = `vyre-${channel}-v${version}-b${buildNumber}.${ext}`;
+        const destPath = path.join(uploadsDir, apkFilename);
+
+        const stream = fs.createWriteStream(destPath);
+        await new Promise<void>((resolve, reject) => {
+          file.file.pipe(stream);
+          file.file.on('error', reject);
+          stream.on('finish', resolve);
+          stream.on('error', reject);
+        });
+
+        const apkBuffer = fs.readFileSync(destPath);
+        const signature = crypto.createHash('sha256').update(apkBuffer).digest('hex');
+        const size = apkBuffer.length;
+
+        const result = await query(
+          `INSERT INTO app_updates (version, build_number, channel, platform, release_notes, apk_filename, mandatory, min_app_version, signature, size)
+           VALUES ($1, $2, $3, $4, $5, $6, false, null, $7, $8)
+           RETURNING *`,
+          [version, buildNumber, channel, platform, releaseNotes, apkFilename, signature, size]
+        );
+
+        return rep.code(201).send({ update: result.rows[0], apkFilename });
+      });
+    }, { prefix: '/' });
+
+    return (request as any).server.inject({ method: 'POST', url: '/', headers: request.headers, payload: (request as any).raw || request.rawBody });
+  });
+
   // Admin: Criar nova atualização
   app.post('/autoupdate', async (request, reply) => {
     const userId = requireAuth(request);
