@@ -14,6 +14,11 @@ import { voiceRoutes } from './routes/voice';
 import { uploadRoutes } from './routes/uploads';
 import { billingRoutes } from './routes/billing';
 import { autoupdateRoutes } from './routes/autoupdate';
+import { threadRoutes } from './routes/threads';
+import { roleRoutes } from './routes/roles';
+import { moderationRoutes } from './routes/moderation';
+import { presenceRoutes } from './routes/presence';
+import { exportInviteRoutes } from './routes/exports_invites';
 import { verifyAccessToken } from './lib/auth';
 import { registerWs } from './ws';
 
@@ -29,6 +34,8 @@ const OPEN_ROUTES = [
   '/api/v1/autoupdate/test',
   '/api/v1/autoupdate/download/',
   '/api/v1/uploads/health',
+  '/api/v1/public/users/',
+  '/api/v1/invites/',
 ];
 
 export async function buildApp() {
@@ -55,14 +62,38 @@ export async function buildApp() {
   app.addHook('onRequest', async (request, reply) => {
     const url = request.url.split('?')[0];
     if (!url.startsWith('/api/')) return;
+    // Check exact matches
     if (OPEN_ROUTES.includes(url)) return;
+
+    // Determine if this is a public route (optional auth)
+    const isPublicRoute = url.startsWith('/api/v1/public/') || 
+                          url.startsWith('/api/v1/invites/') ||
+                          url.includes('/thread') ||
+                          url.includes('/reactions') ||
+                          url.includes('/pins') ||
+                          url.startsWith('/api/v1/users/me/activity');
+
+    // Always try to verify token if present
     const header = request.headers.authorization;
     const token = header?.startsWith('Bearer ') ? header.slice(7) : null;
     const userId = token ? verifyAccessToken(token) : null;
-    if (!userId) {
+
+    console.log('[DEBUG] URL:', url, 'token:', token ? token.substring(0, 20) + '...' : 'none', 'userId:', userId, 'jwtSecret:', env.jwtSecret ? 'set' : 'not set');
+
+    // If private route and no valid token, reject
+    const isPrivateRoute = !url.startsWith('/api/v1/public/') && 
+                           !url.startsWith('/api/v1/invites/') &&
+                           !url.includes('/thread') &&
+                           !url.includes('/reactions') &&
+                           !url.includes('/pins') &&
+                           !url.startsWith('/api/v1/users/me/activity');
+    if (!userId && isPrivateRoute) {
       return reply.code(401).send({ error: 'Não autenticado' });
     }
-    (request as unknown as { userId: string }).userId = userId;
+
+    if (userId) {
+      (request as unknown as { userId: string }).userId = userId;
+    }
   });
 
   // Erros → JSON amigável
@@ -87,6 +118,11 @@ export async function buildApp() {
   await app.register(uploadRoutes, { prefix: '/api/v1' });
   await app.register(billingRoutes, { prefix: '/api/v1' });
   await app.register(autoupdateRoutes, { prefix: '/api/v1' });
+  await app.register(threadRoutes, { prefix: '/api/v1' });
+  await app.register(roleRoutes, { prefix: '/api/v1' });
+  await app.register(moderationRoutes, { prefix: '/api/v1' });
+  await app.register(presenceRoutes, { prefix: '/api/v1' });
+  await app.register(exportInviteRoutes, { prefix: '/api/v1' });
 
   registerWs(app);
 
